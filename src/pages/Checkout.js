@@ -1,451 +1,370 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Row, Col, Card, Form, Button, Spinner, Alert } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, Card, Alert, ListGroup } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
-import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
-import Header from '../components/Header';
-import Footer from '../components/Footer';
 import { toast } from 'react-toastify';
+import { FaShoppingCart, FaCreditCard, FaMoneyBill, FaCheckCircle } from 'react-icons/fa';
 
 function Checkout() {
   const { currentUser } = useAuth();
-  const { cart, subtotal, clearCart } = useCart();
+  const { cart, calculateTotal, clearCart, itemsCount } = useCart();
   const navigate = useNavigate();
-
-  // Form states
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState({
-    street: '',
+  
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [orderSuccess, setOrderSuccess] = useState(false);
+  const [orderId, setOrderId] = useState('');
+  
+  // Form state
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: currentUser?.email || '',
+    phone: '',
+    address: '',
     city: '',
     state: '',
-    pincode: '',
-    country: 'India'
+    postalCode: '',
+    paymentMethod: 'cod'
   });
-  const [paymentMethod, setPaymentMethod] = useState('cod');
-  const [loading, setLoading] = useState(false);
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [orderId, setOrderId] = useState(null);
-
-  // Calculate shipping fee (free over ₹500)
-  const shippingFee = subtotal >= 500 || subtotal === 0 ? 0 : 50;
   
-  // Calculate total amount
-  const totalAmount = subtotal + shippingFee;
-
-  // Pre-fill form if user is logged in
-  useEffect(() => {
-    if (currentUser) {
-      setEmail(currentUser.email || '');
-      setPhone(currentUser.phoneNumber?.replace('+91', '') || '');
-      setName(currentUser.displayName || '');
-    }
-  }, [currentUser]);
-
+  // Calculate order amounts
+  const subtotal = calculateTotal() || 0; // Ensure subtotal is never undefined
+  const shipping = subtotal > 999 ? 0 : 49;
+  const tax = subtotal * 0.18;
+  const total = subtotal + shipping + tax;
+  
   // Redirect if cart is empty
   useEffect(() => {
-    if (cart.length === 0 && !orderId) {
+    if (itemsCount === 0 && !orderSuccess) {
       navigate('/cart');
     }
-  }, [cart, navigate, orderId]);
+  }, [itemsCount, orderSuccess, navigate]);
 
-  // Handle address input change
-  const handleAddressChange = (e) => {
+  // Handle form input changes
+  const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setAddress(prev => ({
-      ...prev,
+    setFormData({
+      ...formData,
       [name]: value
-    }));
+    });
   };
 
   // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (paymentMethod === 'online' && !orderId) {
-      try {
-        setError('');
-        setLoading(true);
-        
-        // Create pending order first
-        const orderData = {
-          userId: currentUser?.uid || null,
-          customerName: name,
-          customerEmail: email,
-          customerPhone: phone,
-          address: address,
-          items: cart,
-          subtotal: subtotal,
-          shipping: shippingFee,
-          total: totalAmount,
-          paymentMethod: 'online',
-          status: 'pending',
-          createdAt: serverTimestamp(),
-          paymentStatus: 'pending'
-        };
-        
-        const orderRef = await addDoc(collection(db, 'orders'), orderData);
-        setOrderId(orderRef.id);
-        
-        setLoading(false);
-        
-        // Now initiate PhonePe payment
-        initiatePhonePePayment(orderRef.id);
-      } catch (err) {
-        console.error("Error creating order:", err);
-        setError('Failed to create order. Please try again.');
-        setLoading(false);
-      }
-    } else if (paymentMethod === 'cod') {
-      try {
-        setError('');
-        setLoading(true);
-        
-        // Create order directly for COD
-        const orderData = {
-          userId: currentUser?.uid || null,
-          customerName: name,
-          customerEmail: email,
-          customerPhone: phone,
-          address: address,
-          items: cart,
-          subtotal: subtotal,
-          shipping: shippingFee,
-          total: totalAmount,
-          paymentMethod: 'cod',
-          status: 'pending',
-          createdAt: serverTimestamp(),
-          paymentStatus: 'pending'
-        };
-        
-        const orderRef = await addDoc(collection(db, 'orders'), orderData);
-        
-        // Clear cart after successful order
-        clearCart();
-        
-        toast.success('Order placed successfully!');
-        navigate(`/orders?success=true&orderId=${orderRef.id}`);
-      } catch (err) {
-        console.error("Error creating order:", err);
-        setError('Failed to place order. Please try again.');
-        setLoading(false);
-      }
+    if (!currentUser) {
+      setError('You must be logged in to place an order');
+      return;
     }
-  };
-
-  // Initiate PhonePe payment
-  const initiatePhonePePayment = (orderId) => {
-    setPaymentLoading(true);
     
-    // In a real implementation, you would call your backend API to create a payment request
-    // For this demo, we're simulating the payment process
-    
-    // Simulate a PhonePe payment with mock data
-    // In production, you would:
-    // 1. Create a backend API endpoint to generate PhonePe payment request
-    // 2. The backend would call PhonePe API to create a payment session
-    // 3. Return the payment URL or redirect info to the frontend
-    
-    setTimeout(() => {
-      // Simulate payment popup
-      const isPaymentSuccessful = window.confirm(
-        `Simulate Payment: \n\nAmount: ₹${totalAmount.toFixed(2)}\nPhone: ${phone}\n\nPress OK to simulate successful payment or Cancel to simulate failed payment.`
-      );
+    try {
+      setLoading(true);
+      setError('');
       
-      if (isPaymentSuccessful) {
-        handlePaymentSuccess(orderId);
-      } else {
-        handlePaymentFailure(orderId);
+      // Validate form data
+      if (!formData.fullName || !formData.email || !formData.phone || !formData.address) {
+        setError('Please fill in all required fields');
+        setLoading(false);
+        return;
       }
       
-      setPaymentLoading(false);
-    }, 2000);
-  };
-
-  // Handle successful payment
-  const handlePaymentSuccess = async (orderId) => {
-    try {
-      // Update order with payment success details
-      const orderRef = doc(db, 'orders', orderId);
-      await updateDoc(orderRef, {
-        paymentStatus: 'completed',
-        transactionId: 'PHONEPAY' + Math.random().toString(36).substring(2, 10).toUpperCase(),
+      // Create order object
+      const orderData = {
+        userId: currentUser.uid,
+        userEmail: currentUser.email,
+        items: cart.map(item => ({
+          id: item.id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          image: item.image || null
+        })),
+        shipping: {
+          fullName: formData.fullName,
+          email: formData.email,
+          phone: formData.phone,
+          address: formData.address,
+          city: formData.city,
+          state: formData.state,
+          postalCode: formData.postalCode
+        },
+        payment: {
+          method: formData.paymentMethod,
+          status: formData.paymentMethod === 'cod' ? 'pending' : 'processing'
+        },
+        amounts: {
+          subtotal,
+          shipping,
+          tax,
+          total
+        },
+        status: 'pending',
+        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      });
+      };
       
-      // Clear cart after successful payment
+      // Add order to Firestore
+      const orderRef = await addDoc(collection(db, 'orders'), orderData);
+      
+      setOrderId(orderRef.id);
+      setOrderSuccess(true);
       clearCart();
       
-      toast.success('Payment successful! Order has been placed.');
-      navigate(`/orders?success=true&orderId=${orderId}`);
-    } catch (err) {
-      console.error("Error updating order after payment:", err);
-      setError('Payment was successful, but we encountered an issue updating your order status. Please contact customer support.');
-    }
-  };
-
-  // Handle failed payment
-  const handlePaymentFailure = async (orderId) => {
-    try {
-      // Update order with payment failure details
-      const orderRef = doc(db, 'orders', orderId);
-      await updateDoc(orderRef, {
-        paymentStatus: 'failed',
-        updatedAt: serverTimestamp()
+      toast.success('Order placed successfully!', {
+        position: 'top-right',
+        autoClose: 3000
       });
       
-      toast.error('Payment failed. Please try again or choose a different payment method.');
-      setError('Payment failed. You can try again or choose Cash on Delivery.');
     } catch (err) {
-      console.error("Error updating order after payment failure:", err);
-      setError('Payment failed. Please try again or choose a different payment method.');
+      console.error('Error placing order:', err);
+      setError('Failed to place order. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  if (paymentLoading) {
+  // Display order success message
+  if (orderSuccess) {
     return (
-      <>
-        <Header />
-        <Container className="py-5 text-center">
-          <Spinner animation="border" variant="primary" />
-          <h3 className="mt-3">Processing Payment...</h3>
-          <p>Please do not close this window.</p>
-        </Container>
-        <Footer />
-      </>
+      <Container className="py-5">
+        <Card className="text-center p-5">
+          <FaCheckCircle size={60} className="text-success mx-auto mb-4" />
+          <Card.Body>
+            <Card.Title as="h2">Order Placed Successfully!</Card.Title>
+            <Card.Text>
+              Thank you for your order. Your order ID is: <strong>{orderId}</strong>
+            </Card.Text>
+            <Card.Text>
+              We have sent a confirmation email to <strong>{formData.email}</strong>
+            </Card.Text>
+            <Card.Text>
+              Payment Method: <strong>{formData.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Online Payment'}</strong>
+            </Card.Text>
+            <Button 
+              variant="primary" 
+              className="mt-3"
+              onClick={() => navigate('/orders')}
+            >
+              View Your Orders
+            </Button>
+          </Card.Body>
+        </Card>
+      </Container>
     );
   }
 
   return (
-    <>
-      <Header />
-      <Container className="py-5">
-        <h1 className="mb-4">Checkout</h1>
-        
-        {error && <Alert variant="danger">{error}</Alert>}
-        
+    <Container className="py-5">
+      <h2 className="mb-4">Checkout</h2>
+      
+      {error && <Alert variant="danger">{error}</Alert>}
+      
+      <Form onSubmit={handleSubmit}>
         <Row>
           <Col lg={8}>
             <Card className="mb-4">
-              <Card.Header className="bg-white">
-                <h5 className="mb-0">Shipping Information</h5>
+              <Card.Header>
+                <h4 className="mb-0">Shipping Information</h4>
               </Card.Header>
               <Card.Body>
-                <Form onSubmit={handleSubmit}>
-                  <Row>
-                    <Col md={6}>
-                      <Form.Group className="mb-3">
-                        <Form.Label>Full Name</Form.Label>
-                        <Form.Control
-                          type="text"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={6}>
-                      <Form.Group className="mb-3">
-                        <Form.Label>Phone Number</Form.Label>
-                        <Form.Control
-                          type="tel"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                  </Row>
-                  
-                  <Form.Group className="mb-3">
-                    <Form.Label>Email Address</Form.Label>
-                    <Form.Control
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                    />
-                  </Form.Group>
-                  
-                  <Form.Group className="mb-3">
-                    <Form.Label>Street Address</Form.Label>
-                    <Form.Control
-                      type="text"
-                      name="street"
-                      value={address.street}
-                      onChange={handleAddressChange}
-                      required
-                    />
-                  </Form.Group>
-                  
-                  <Row>
-                    <Col md={6}>
-                      <Form.Group className="mb-3">
-                        <Form.Label>City</Form.Label>
-                        <Form.Control
-                          type="text"
-                          name="city"
-                          value={address.city}
-                          onChange={handleAddressChange}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={6}>
-                      <Form.Group className="mb-3">
-                        <Form.Label>State</Form.Label>
-                        <Form.Control
-                          type="text"
-                          name="state"
-                          value={address.state}
-                          onChange={handleAddressChange}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                  </Row>
-                  
-                  <Row>
-                    <Col md={6}>
-                      <Form.Group className="mb-3">
-                        <Form.Label>PIN Code</Form.Label>
-                        <Form.Control
-                          type="text"
-                          name="pincode"
-                          value={address.pincode}
-                          onChange={handleAddressChange}
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col md={6}>
-                      <Form.Group className="mb-3">
-                        <Form.Label>Country</Form.Label>
-                        <Form.Control
-                          type="text"
-                          name="country"
-                          value={address.country}
-                          onChange={handleAddressChange}
-                          disabled
-                        />
-                      </Form.Group>
-                    </Col>
-                  </Row>
-                  
-                  <h5 className="mt-4 mb-3">Payment Method</h5>
-                  
-                  <Form.Group className="mb-3">
-                    <div className="d-flex">
-                      <Form.Check
-                        type="radio"
-                        id="payment-cod"
-                        name="paymentMethod"
-                        label="Cash on Delivery"
-                        value="cod"
-                        checked={paymentMethod === 'cod'}
-                        onChange={() => setPaymentMethod('cod')}
-                        className="me-4"
+                <Row>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Full Name*</Form.Label>
+                      <Form.Control
+                        type="text"
+                        name="fullName"
+                        value={formData.fullName}
+                        onChange={handleInputChange}
+                        required
                       />
-                      <Form.Check
-                        type="radio"
-                        id="payment-phonepay"
-                        name="paymentMethod"
-                        label="PhonePe / UPI (Number: 9182146476)"
-                        value="online"
-                        checked={paymentMethod === 'online'}
-                        onChange={() => setPaymentMethod('online')}
+                    </Form.Group>
+                  </Col>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Email*</Form.Label>
+                      <Form.Control
+                        type="email"
+                        name="email"
+                        value={formData.email}
+                        onChange={handleInputChange}
+                        required
                       />
-                    </div>
-                  </Form.Group>
-                  
-                  <div className="d-grid gap-2 mt-4">
-                    <Button
-                      type="submit"
-                      variant="success"
-                      size="lg"
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <>
-                          <Spinner
-                            as="span"
-                            animation="border"
-                            size="sm"
-                            role="status"
-                            aria-hidden="true"
-                            className="me-2"
-                          />
-                          Processing...
-                        </>
-                      ) : (
-                        `Place Order - Pay ₹${totalAmount.toFixed(2)}`
-                      )}
-                    </Button>
+                    </Form.Group>
+                  </Col>
+                </Row>
+                
+                <Row>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Phone Number*</Form.Label>
+                      <Form.Control
+                        type="tel"
+                        name="phone"
+                        value={formData.phone}
+                        onChange={handleInputChange}
+                        required
+                      />
+                    </Form.Group>
+                  </Col>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Postal Code*</Form.Label>
+                      <Form.Control
+                        type="text"
+                        name="postalCode"
+                        value={formData.postalCode}
+                        onChange={handleInputChange}
+                        required
+                      />
+                    </Form.Group>
+                  </Col>
+                </Row>
+                
+                <Form.Group className="mb-3">
+                  <Form.Label>Address*</Form.Label>
+                  <Form.Control
+                    as="textarea"
+                    rows={3}
+                    name="address"
+                    value={formData.address}
+                    onChange={handleInputChange}
+                    required
+                  />
+                </Form.Group>
+                
+                <Row>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label>City*</Form.Label>
+                      <Form.Control
+                        type="text"
+                        name="city"
+                        value={formData.city}
+                        onChange={handleInputChange}
+                        required
+                      />
+                    </Form.Group>
+                  </Col>
+                  <Col md={6}>
+                    <Form.Group className="mb-3">
+                      <Form.Label>State*</Form.Label>
+                      <Form.Control
+                        type="text"
+                        name="state"
+                        value={formData.state}
+                        onChange={handleInputChange}
+                        required
+                      />
+                    </Form.Group>
+                  </Col>
+                </Row>
+              </Card.Body>
+            </Card>
+            
+            <Card className="mb-4">
+              <Card.Header>
+                <h4 className="mb-0">Payment Method</h4>
+              </Card.Header>
+              <Card.Body>
+                <Form.Group>
+                  <div className="mb-3">
+                    <Form.Check
+                      type="radio"
+                      id="cod"
+                      name="paymentMethod"
+                      value="cod"
+                      label={
+                        <span>
+                          <FaMoneyBill className="me-2" /> Cash on Delivery
+                        </span>
+                      }
+                      checked={formData.paymentMethod === 'cod'}
+                      onChange={handleInputChange}
+                    />
                   </div>
-                </Form>
+                  <div>
+                    <Form.Check
+                      type="radio"
+                      id="online"
+                      name="paymentMethod"
+                      value="online"
+                      label={
+                        <span>
+                          <FaCreditCard className="me-2" /> Pay Online (UPI, Card, NetBanking)
+                        </span>
+                      }
+                      checked={formData.paymentMethod === 'online'}
+                      onChange={handleInputChange}
+                    />
+                    {formData.paymentMethod === 'online' && (
+                      <div className="mt-3 ms-4">
+                        <p className="text-muted">
+                          You will be redirected to the payment gateway after order confirmation.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </Form.Group>
               </Card.Body>
             </Card>
           </Col>
           
           <Col lg={4}>
             <Card className="mb-4">
-              <Card.Header className="bg-white">
-                <h5 className="mb-0">Order Summary</h5>
+              <Card.Header>
+                <h4 className="mb-0">Order Summary</h4>
               </Card.Header>
               <Card.Body>
-                {cart.map(item => (
-                  <div key={item.id} className="d-flex justify-content-between mb-2">
-                    <span>
-                      {item.name} × {item.quantity}
-                    </span>
-                    <span>₹{(item.price * item.quantity).toFixed(2)}</span>
-                  </div>
-                ))}
-                
-                <hr />
-                
+                <ListGroup variant="flush">
+                  {cart.map(item => (
+                    <ListGroup.Item key={item.id} className="d-flex justify-content-between align-items-center">
+                      <div>
+                        <span className="fw-bold">{item.quantity} x </span>
+                        {item.name}
+                      </div>
+                      <span>₹{(item.price * item.quantity).toFixed(2)}</span>
+                    </ListGroup.Item>
+                  ))}
+                </ListGroup>
+              </Card.Body>
+              <Card.Footer>
                 <div className="d-flex justify-content-between mb-2">
                   <span>Subtotal:</span>
                   <span>₹{subtotal.toFixed(2)}</span>
                 </div>
                 <div className="d-flex justify-content-between mb-2">
                   <span>Shipping:</span>
-                  <span>{shippingFee > 0 ? `₹${shippingFee.toFixed(2)}` : 'Free'}</span>
+                  <span>₹{shipping.toFixed(2)}</span>
+                </div>
+                <div className="d-flex justify-content-between mb-3">
+                  <span>Tax (18%):</span>
+                  <span>₹{tax.toFixed(2)}</span>
+                </div>
+                <div className="d-flex justify-content-between fw-bold">
+                  <span>Total:</span>
+                  <span>₹{total.toFixed(2)}</span>
                 </div>
                 
-                <hr />
-                
-                <div className="d-flex justify-content-between mb-0">
-                  <h5>Total:</h5>
-                  <h5>₹{totalAmount.toFixed(2)}</h5>
+                <div className="d-grid gap-2 mt-4">
+                  <Button 
+                    variant="primary" 
+                    type="submit"
+                    disabled={loading}
+                  >
+                    {loading ? 'Processing...' : 'Place Order'}
+                  </Button>
                 </div>
-              </Card.Body>
+              </Card.Footer>
             </Card>
-            
-            {/* PhonePe Logo */}
-            {paymentMethod === 'online' && (
-              <Card className="border-0 bg-light">
-                <Card.Body className="text-center">
-                  <img 
-                    src="https://www.logo.wine/a/logo/PhonePe/PhonePe-Logo.wine.svg" 
-                    alt="PhonePe" 
-                    style={{ height: '60px' }}
-                  />
-                  <p className="small text-muted mb-0">
-                    Secure payments powered by PhonePe
-                  </p>
-                </Card.Body>
-              </Card>
-            )}
           </Col>
         </Row>
-      </Container>
-      <Footer />
-    </>
+      </Form>
+    </Container>
   );
 }
 

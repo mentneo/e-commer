@@ -1,172 +1,166 @@
 import React from 'react';
-import { Container, Row, Col, Card, Button, Table, Form, Alert } from 'react-bootstrap';
-import { Link } from 'react-router-dom';
+import { Container, Row, Col, Card, Button, Form, Alert } from 'react-bootstrap';
+import { Link, useNavigate } from 'react-router-dom';
 import { FaTrash, FaArrowLeft, FaShoppingCart } from 'react-icons/fa';
 import { useCart } from '../contexts/CartContext';
-import Header from '../components/Header';
-import Footer from '../components/Footer';
-import { toast } from 'react-toastify';
+import { useAuth } from '../contexts/AuthContext';
 
 function Cart() {
-  const { cart, updateQuantity, removeFromCart, subtotal, loading } = useCart();
-
-  const handleQuantityChange = (productId, newQuantity) => {
-    if (newQuantity < 1) return;
-    updateQuantity(productId, newQuantity);
-  };
-
-  const handleRemoveItem = (productId, productName) => {
-    removeFromCart(productId);
-    toast.success(`${productName} removed from cart`);
-  };
-
-  // Calculate shipping fee (free over ₹500)
-  const shippingFee = subtotal >= 500 || subtotal === 0 ? 0 : 50;
+  const { cart, loading, error, removeFromCart, updateQuantity, calculateTotal, itemsCount } = useCart();
+  const { currentUser } = useAuth();
+  const navigate = useNavigate();
   
-  // Calculate total amount
-  const totalAmount = subtotal + shippingFee;
-
+  if (loading) {
+    return (
+      <Container className="my-5">
+        <div className="text-center py-5">
+          <div className="spinner-border" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+          <p className="mt-3">Loading your cart...</p>
+        </div>
+      </Container>
+    );
+  }
+  
   return (
-    <>
-      <Header />
-      <Container className="py-5">
-        <h1 className="mb-4">Shopping Cart</h1>
-        
-        {loading ? (
-          <p>Loading your cart...</p>
-        ) : cart.length === 0 ? (
-          <Card className="text-center p-5">
-            <Card.Body>
-              <FaShoppingCart size={50} className="text-muted mb-3" />
-              <h3>Your cart is empty</h3>
-              <p className="text-muted">Add items to your cart to continue shopping</p>
-              <Link to="/products" className="btn btn-primary mt-3">
-                Continue Shopping
-              </Link>
-            </Card.Body>
-          </Card>
-        ) : (
+    <Container className="my-5">
+      <h2 className="mb-4">Your Shopping Cart</h2>
+      
+      {error && (
+        <Alert variant="warning">
+          {error}
+        </Alert>
+      )}
+      
+      {itemsCount === 0 ? (
+        <Card className="text-center p-5">
+          <Card.Body>
+            <FaShoppingCart size={50} className="text-muted mb-3" />
+            <Card.Title>Your cart is empty</Card.Title>
+            <Card.Text>
+              Looks like you haven't added anything to your cart yet.
+            </Card.Text>
+            <Link to="/products" className="btn btn-primary mt-3">
+              <FaArrowLeft className="me-2" /> Continue Shopping
+            </Link>
+          </Card.Body>
+        </Card>
+      ) : (
+        <>
           <Row>
             <Col lg={8}>
               <Card className="mb-4">
+                <Card.Header>
+                  <h5 className="mb-0">Cart Items ({itemsCount})</h5>
+                </Card.Header>
                 <Card.Body>
-                  <Table responsive className="mb-0">
-                    <thead>
-                      <tr>
-                        <th>Product</th>
-                        <th>Price</th>
-                        <th>Quantity</th>
-                        <th>Total</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cart.map(item => (
-                        <tr key={item.id}>
-                          <td>
-                            <div className="d-flex align-items-center">
-                              <img 
-                                src={item.imageURL || 'https://via.placeholder.com/80'} 
-                                alt={item.name}
-                                style={{ width: '80px', height: '80px', objectFit: 'cover' }}
-                                className="me-3"
-                              />
-                              <div>
-                                <h6 className="mb-0">{item.name}</h6>
-                                <small className="text-muted">{item.category}</small>
-                              </div>
-                            </div>
-                          </td>
-                          <td>₹{item.price?.toFixed(2)}</td>
-                          <td style={{ width: '150px' }}>
-                            <div className="d-flex align-items-center">
-                              <Button 
-                                variant="outline-secondary" 
-                                size="sm"
-                                onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
-                                disabled={item.quantity <= 1}
-                              >
-                                -
-                              </Button>
-                              <Form.Control
-                                type="number"
-                                value={item.quantity}
-                                onChange={(e) => handleQuantityChange(item.id, parseInt(e.target.value) || 1)}
-                                min="1"
-                                className="mx-2 text-center"
-                                style={{ width: '60px' }}
-                              />
-                              <Button 
-                                variant="outline-secondary" 
-                                size="sm"
-                                onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
-                              >
-                                +
-                              </Button>
-                            </div>
-                          </td>
-                          <td>₹{(item.price * item.quantity).toFixed(2)}</td>
-                          <td>
-                            <Button 
-                              variant="link" 
-                              className="text-danger p-0"
-                              onClick={() => handleRemoveItem(item.id, item.name)}
-                            >
-                              <FaTrash />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </Table>
+                  {cart.map(item => (
+                    <Row key={item.id} className="mb-4 border-bottom pb-4">
+                      <Col xs={3} md={2}>
+                        <img 
+                          src={item.image || '/placeholder.jpg'} 
+                          alt={item.name} 
+                          className="img-fluid rounded"
+                          style={{ maxHeight: '80px', objectFit: 'contain' }}
+                        />
+                      </Col>
+                      <Col xs={9} md={5}>
+                        <h6 className="text-truncate">{item.name}</h6>
+                        <p className="text-muted small mb-0">
+                          Price: ₹{item.price.toLocaleString()}
+                        </p>
+                      </Col>
+                      <Col xs={6} md={3} className="mt-3 mt-md-0">
+                        <div className="d-flex align-items-center">
+                          <Button 
+                            variant="outline-secondary" 
+                            size="sm"
+                            onClick={() => updateQuantity(item.id, Math.max(1, item.quantity - 1))}
+                          >
+                            -
+                          </Button>
+                          <Form.Control
+                            type="number"
+                            min="1"
+                            value={item.quantity}
+                            onChange={(e) => updateQuantity(item.id, parseInt(e.target.value) || 1)}
+                            className="text-center mx-2"
+                            style={{ width: '60px' }}
+                          />
+                          <Button 
+                            variant="outline-secondary" 
+                            size="sm"
+                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                          >
+                            +
+                          </Button>
+                        </div>
+                      </Col>
+                      <Col xs={6} md={2} className="text-end mt-3 mt-md-0">
+                        <p className="fw-bold mb-2">₹{(item.price * item.quantity).toLocaleString()}</p>
+                        <Button 
+                          variant="outline-danger" 
+                          size="sm"
+                          onClick={() => removeFromCart(item.id)}
+                        >
+                          <FaTrash /> Remove
+                        </Button>
+                      </Col>
+                    </Row>
+                  ))}
                 </Card.Body>
               </Card>
-              
-              <div className="d-flex justify-content-between">
-                <Link to="/products" className="btn btn-outline-primary">
-                  <FaArrowLeft className="me-2" /> Continue Shopping
-                </Link>
-              </div>
             </Col>
             
             <Col lg={4}>
-              <Card>
-                <Card.Header className="bg-white">
+              <Card className="mb-4">
+                <Card.Header>
                   <h5 className="mb-0">Order Summary</h5>
                 </Card.Header>
                 <Card.Body>
-                  <div className="d-flex justify-content-between mb-2">
-                    <span>Subtotal:</span>
-                    <span>₹{subtotal.toFixed(2)}</span>
-                  </div>
-                  <div className="d-flex justify-content-between mb-2">
-                    <span>Shipping:</span>
-                    <span>{shippingFee > 0 ? `₹${shippingFee.toFixed(2)}` : 'Free'}</span>
-                  </div>
-                  {subtotal < 500 && subtotal > 0 && (
-                    <Alert variant="info" className="mt-2 mb-3 py-2 small">
-                      Add ₹{(500 - subtotal).toFixed(2)} more to get free shipping!
-                    </Alert>
-                  )}
-                  <hr />
                   <div className="d-flex justify-content-between mb-3">
-                    <h5>Total:</h5>
-                    <h5>₹{totalAmount.toFixed(2)}</h5>
+                    <span>Subtotal:</span>
+                    <span>₹{calculateTotal().toLocaleString()}</span>
                   </div>
-                  <Link 
-                    to="/checkout" 
-                    className="btn btn-success w-100"
+                  <div className="d-flex justify-content-between mb-3">
+                    <span>Shipping:</span>
+                    <span>₹{(calculateTotal() > 999 ? 0 : 49).toLocaleString()}</span>
+                  </div>
+                  <div className="d-flex justify-content-between mb-3">
+                    <span>Tax (GST 18%):</span>
+                    <span>₹{(calculateTotal() * 0.18).toLocaleString()}</span>
+                  </div>
+                  <hr />
+                  <div className="d-flex justify-content-between mb-3 fw-bold">
+                    <span>Total:</span>
+                    <span>₹{(calculateTotal() + (calculateTotal() > 999 ? 0 : 49) + calculateTotal() * 0.18).toLocaleString()}</span>
+                  </div>
+                  
+                  <Button 
+                    variant="primary" 
+                    className="w-100 mt-3"
+                    onClick={() => {
+                      if (currentUser) {
+                        navigate('/checkout');
+                      } else {
+                        navigate('/login', { state: { from: '/checkout' } });
+                      }
+                    }}
                   >
                     Proceed to Checkout
+                  </Button>
+                  
+                  <Link to="/products" className="btn btn-outline-secondary w-100 mt-3">
+                    <FaArrowLeft className="me-2" /> Continue Shopping
                   </Link>
                 </Card.Body>
               </Card>
             </Col>
           </Row>
-        )}
-      </Container>
-      <Footer />
-    </>
+        </>
+      )}
+    </Container>
   );
 }
 

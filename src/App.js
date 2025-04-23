@@ -4,6 +4,10 @@ import { AuthProvider } from './contexts/AuthContext';
 import { CartProvider } from './contexts/CartContext';
 import PrivateRoute from './components/PrivateRoute';
 import AdminRoute from './components/AdminRoute';
+import Header from './components/Header';
+import Footer from './components/Footer';
+import './App.css';
+import './styles/Admin.css';
 
 // Customer Pages
 import Home from './pages/Home';
@@ -16,13 +20,13 @@ import Checkout from './pages/Checkout';
 import Orders from './pages/Orders';
 import Profile from './pages/Profile';
 
-// Admin Pages - Secret Path
+// Admin Pages
 import SecretAdminLogin from './pages/admin/SecretAdminLogin';
-import AdminDashboard from './pages/admin/Dashboard';
+import Dashboard from './pages/admin/Dashboard';
 import ProductManagement from './pages/admin/ProductManagement';
 import OrderManagement from './pages/admin/OrderManagement';
-import DiscountManagement from './pages/admin/DiscountManagement';
 import CustomerManagement from './pages/admin/CustomerManagement';
+import DiscountManagement from './pages/admin/DiscountManagement';
 import NotificationCenter from './pages/admin/NotificationCenter';
 
 function App() {
@@ -31,29 +35,85 @@ function App() {
       <AuthProvider>
         <CartProvider>
           <Routes>
-            {/* Public Routes */}
-            <Route path="/" element={<Home />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/product/:id" element={<ProductDetail />} />
+            {/* Public Routes with Header & Footer */}
+            <Route path="/" element={
+              <>
+                <Header />
+                <Home />
+                <Footer />
+              </>
+            } />
+            <Route path="/login" element={
+              <>
+                <Header />
+                <Login />
+                <Footer />
+              </>
+            } />
+            <Route path="/register" element={
+              <>
+                <Header />
+                <Register />
+                <Footer />
+              </>
+            } />
+            <Route path="/products" element={
+              <>
+                <Header />
+                <Products />
+                <Footer />
+              </>
+            } />
+            <Route path="/product/:id" element={
+              <>
+                <Header />
+                <ProductDetail />
+                <Footer />
+              </>
+            } />
             
             {/* Protected Customer Routes */}
             <Route element={<PrivateRoute />}>
-              <Route path="/cart" element={<Cart />} />
-              <Route path="/checkout" element={<Checkout />} />
-              <Route path="/orders" element={<Orders />} />
-              <Route path="/profile" element={<Profile />} />
+              <Route path="/cart" element={
+                <>
+                  <Header />
+                  <Cart />
+                  <Footer />
+                </>
+              } />
+              <Route path="/checkout" element={
+                <>
+                  <Header />
+                  <Checkout />
+                  <Footer />
+                </>
+              } />
+              <Route path="/orders" element={
+                <>
+                  <Header />
+                  <Orders />
+                  <Footer />
+                </>
+              } />
+              <Route path="/profile" element={
+                <>
+                  <Header />
+                  <Profile />
+                  <Footer />
+                </>
+              } />
             </Route>
             
-            {/* Secret Admin Routes */}
+            {/* Secret Admin Login */}
             <Route path="/super-admin-secret-login-portal" element={<SecretAdminLogin />} />
+            
+            {/* Admin Routes with AdminLayout */}
             <Route element={<AdminRoute />}>
-              <Route path="/admin/dashboard" element={<AdminDashboard />} />
+              <Route path="/admin/dashboard" element={<Dashboard />} />
               <Route path="/admin/products" element={<ProductManagement />} />
               <Route path="/admin/orders" element={<OrderManagement />} />
-              <Route path="/admin/discounts" element={<DiscountManagement />} />
               <Route path="/admin/customers" element={<CustomerManagement />} />
+              <Route path="/admin/discounts" element={<DiscountManagement />} />
               <Route path="/admin/notifications" element={<NotificationCenter />} />
             </Route>
           </Routes>

@@ -1,368 +1,1010 @@
-import React, { useState, useEffect } from 'react';
-import { Container, Card, Table, Button, Form, Row, Col, Modal } from 'react-bootstrap';
-import { collection, doc, addDoc, updateDoc, deleteDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
+import { Container, Card, Table, Button, Form, Alert, Modal, Row, Col, Badge, InputGroup, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { toast } from 'react-toastify';
-import AdminSidebar from '../../components/admin/AdminSidebar';
-import AdminHeader from '../../components/admin/AdminHeader';
+import { FaPlus, FaEdit, FaTrash, FaInfoCircle, FaCopy, FaCheck, FaGift, FaUsers, FaShoppingCart, FaPercent, FaRupeeSign, FaChartLine } from 'react-icons/fa';
+
+// Conditionally import Chart.js to handle cases where it's not installed
+let Chart;
+try {
+  Chart = require('chart.js/auto');
+} catch (e) {
+  console.warn('Chart.js not available. Charts will not be rendered.');
+  Chart = null;
+}
 
 function DiscountManagement() {
   const [discounts, setDiscounts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [currentDiscount, setCurrentDiscount] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [currentDiscount, setCurrentDiscount] = useState({
+    code: '',
+    type: 'percentage',
+    value: '',
+    minOrderAmount: '',
+    maxDiscount: '',
+    usageLimit: '',
+    usedCount: 0,
+    startDate: '',
+    endDate: '',
+    description: '',
+    isActive: true,
+    applicableProducts: [],
+    excludedProducts: []
+  });
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [products, setProducts] = useState([]);
+  const [couponCopied, setCouponCopied] = useState(false);
+  const [stats, setStats] = useState({
+    activeDiscounts: 0,
+    expiredDiscounts: 0,
+    totalUsage: 0,
+    totalSavings: 0
+  });
   
-  // Form states
-  const [code, setCode] = useState('');
-  const [discountType, setDiscountType] = useState('percentage');
-  const [value, setValue] = useState('');
-  const [minAmount, setMinAmount] = useState('');
-  const [maxAmount, setMaxAmount] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [isActive, setIsActive] = useState(true);
-  
+  // Chart references
+  const usageChartRef = useRef(null);
+  const usageChartInstance = useRef(null);
+  const typeChartRef = useRef(null);
+  const typeChartInstance = useRef(null);
+
+  // Fetch discounts and products
   useEffect(() => {
-    fetchDiscounts();
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        
+        // Fetch discounts
+        const discountsQuery = query(collection(db, 'discounts'));
+        const discountsSnapshot = await getDocs(discountsQuery);
+        
+        const discountsData = [];
+        let activeCount = 0;
+        let expiredCount = 0;
+        let totalUsage = 0;
+        let totalSavings = 0;
+        
+        discountsSnapshot.forEach((doc) => {
+          const discount = { id: doc.id, ...doc.data() };
+          
+          // Calculate expiry status
+          const now = new Date();
+          const endDate = discount.endDate ? new Date(discount.endDate) : null;
+          const isExpired = endDate && endDate < now;
+          
+          if (isExpired) {
+            expiredCount++;
+          } else if (discount.isActive) {
+            activeCount++;
+          }
+          
+          totalUsage += discount.usedCount || 0;
+          totalSavings += discount.totalSavings || 0;
+          
+          discountsData.push(discount);
+        });
+        
+        setDiscounts(discountsData);
+        setStats({
+          activeDiscounts: activeCount,
+          expiredDiscounts: expiredCount,
+          totalUsage,
+          totalSavings
+        });
+        
+        // Fetch products for the product selector
+        const productsQuery = query(collection(db, 'products'));
+        const productsSnapshot = await getDocs(productsQuery);
+        
+        const productsData = [];
+        productsSnapshot.forEach((doc) => {
+          productsData.push({ id: doc.id, ...doc.data() });
+        });
+        
+        setProducts(productsData);
+        setError(null);
+        
+        // Initialize charts
+        initializeCharts(discountsData);
+        
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        setError('Failed to load discounts. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchData();
+    
+    // Cleanup charts on component unmount
+    return () => {
+      if (usageChartInstance.current) {
+        usageChartInstance.current.destroy();
+      }
+      if (typeChartInstance.current) {
+        typeChartInstance.current.destroy();
+      }
+    };
   }, []);
-  
-  const fetchDiscounts = async () => {
-    try {
-      setLoading(true);
-      const discountsRef = collection(db, 'discounts');
-      const discountsSnapshot = await getDocs(discountsRef);
-      const discountsList = discountsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        startDate: doc.data().startDate ? new Date(doc.data().startDate).toISOString().split('T')[0] : '',
-        endDate: doc.data().endDate ? new Date(doc.data().endDate).toISOString().split('T')[0] : ''
-      }));
-      setDiscounts(discountsList);
-    } catch (error) {
-      console.error("Error fetching discounts:", error);
-      toast.error("Failed to fetch discounts");
-    } finally {
-      setLoading(false);
+
+  // Initialize charts - modified to handle missing Chart.js
+  const initializeCharts = (discountsData) => {
+    // If Chart.js is not available, do nothing
+    if (!Chart) {
+      console.warn('Charts not rendered because Chart.js is not installed');
+      return;
+    }
+    
+    if (usageChartRef.current) {
+      // Prepare data for usage chart (top 5 most used coupons)
+      const sortedByUsage = [...discountsData].sort((a, b) => (b.usedCount || 0) - (a.usedCount || 0)).slice(0, 5);
+      
+      if (usageChartInstance.current) {
+        usageChartInstance.current.destroy();
+      }
+      
+      const ctx = usageChartRef.current.getContext('2d');
+      usageChartInstance.current = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: sortedByUsage.map(d => d.code),
+          datasets: [{
+            label: 'Usage Count',
+            data: sortedByUsage.map(d => d.usedCount || 0),
+            backgroundColor: 'rgba(54, 162, 235, 0.6)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              display: false
+            },
+            title: {
+              display: true,
+              text: 'Most Used Discount Codes'
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Usage Count'
+              },
+              ticks: {
+                precision: 0
+              }
+            }
+          }
+        }
+      });
+    }
+    
+    if (typeChartRef.current) {
+      // Prepare data for discount type distribution
+      const typeCounts = {
+        percentage: discountsData.filter(d => d.type === 'percentage').length,
+        fixed: discountsData.filter(d => d.type === 'fixed').length
+      };
+      
+      if (typeChartInstance.current) {
+        typeChartInstance.current.destroy();
+      }
+      
+      const ctx = typeChartRef.current.getContext('2d');
+      typeChartInstance.current = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Percentage Discounts', 'Fixed Amount Discounts'],
+          datasets: [{
+            data: [typeCounts.percentage, typeCounts.fixed],
+            backgroundColor: [
+              'rgba(255, 99, 132, 0.6)',
+              'rgba(75, 192, 192, 0.6)'
+            ],
+            borderColor: [
+              'rgba(255, 99, 132, 1)',
+              'rgba(75, 192, 192, 1)'
+            ],
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              position: 'bottom'
+            },
+            title: {
+              display: true,
+              text: 'Discount Types Distribution'
+            }
+          }
+        }
+      });
     }
   };
-  
-  const resetForm = () => {
-    setCode('');
-    setDiscountType('percentage');
-    setValue('');
-    setMinAmount('');
-    setMaxAmount('');
-    setStartDate('');
-    setEndDate('');
-    setIsActive(true);
-    setEditMode(false);
-    setCurrentDiscount(null);
+
+  // Generate random coupon code
+  const generateCouponCode = () => {
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 8; i++) {
+      result += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    setCurrentDiscount(prev => ({ ...prev, code: result }));
   };
-  
+
+  // Handle form input changes
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setCurrentDiscount(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  // Open modal for adding new discount
   const handleAddDiscount = () => {
-    resetForm();
+    // Set default dates
+    const today = new Date();
+    const nextMonth = new Date();
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    
+    setCurrentDiscount({
+      code: '',
+      type: 'percentage',
+      value: '',
+      minOrderAmount: '',
+      maxDiscount: '',
+      usageLimit: '',
+      usedCount: 0,
+      startDate: today.toISOString().split('T')[0],
+      endDate: nextMonth.toISOString().split('T')[0],
+      description: '',
+      isActive: true,
+      applicableProducts: [],
+      excludedProducts: []
+    });
+    
+    setIsEditing(false);
     setShowModal(true);
   };
-  
+
+  // Open modal for editing discount
   const handleEditDiscount = (discount) => {
-    setCurrentDiscount(discount);
-    setCode(discount.code);
-    setDiscountType(discount.type);
-    setValue(discount.value);
-    setMinAmount(discount.minAmount || '');
-    setMaxAmount(discount.maxAmount || '');
-    setStartDate(discount.startDate || '');
-    setEndDate(discount.endDate || '');
-    setIsActive(discount.isActive);
-    setEditMode(true);
+    // Format dates for the date inputs
+    const startDate = discount.startDate ? new Date(discount.startDate).toISOString().split('T')[0] : '';
+    const endDate = discount.endDate ? new Date(discount.endDate).toISOString().split('T')[0] : '';
+    
+    setCurrentDiscount({
+      ...discount,
+      startDate,
+      endDate
+    });
+    
+    setIsEditing(true);
     setShowModal(true);
   };
-  
+
+  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     try {
+      setLoading(true);
+      
+      // Validate form
+      if (!currentDiscount.code || !currentDiscount.value || !currentDiscount.startDate) {
+        setError('Please fill all required fields');
+        setLoading(false);
+        return;
+      }
+      
+      // Convert dates to timestamps
+      const startDate = new Date(currentDiscount.startDate);
+      const endDate = currentDiscount.endDate ? new Date(currentDiscount.endDate) : null;
+      
+      // Prepare discount data
       const discountData = {
-        code: code.toUpperCase(),
-        type: discountType,
-        value: parseFloat(value),
-        minAmount: minAmount ? parseFloat(minAmount) : null,
-        maxAmount: maxAmount ? parseFloat(maxAmount) : null,
-        startDate: startDate ? new Date(startDate).toISOString() : null,
-        endDate: endDate ? new Date(endDate).toISOString() : null,
-        isActive: isActive,
-        updatedAt: serverTimestamp()
+        code: currentDiscount.code.toUpperCase(),
+        type: currentDiscount.type,
+        value: parseFloat(currentDiscount.value),
+        minOrderAmount: currentDiscount.minOrderAmount ? parseFloat(currentDiscount.minOrderAmount) : 0,
+        maxDiscount: currentDiscount.maxDiscount ? parseFloat(currentDiscount.maxDiscount) : null,
+        usageLimit: currentDiscount.usageLimit ? parseInt(currentDiscount.usageLimit) : null,
+        startDate: startDate,
+        endDate: endDate,
+        description: currentDiscount.description,
+        isActive: currentDiscount.isActive,
+        applicableProducts: currentDiscount.applicableProducts || [],
+        excludedProducts: currentDiscount.excludedProducts || [],
+        updatedAt: new Date()
       };
       
-      if (editMode && currentDiscount) {
+      if (isEditing) {
         // Update existing discount
-        const discountRef = doc(db, 'discounts', currentDiscount.id);
-        await updateDoc(discountRef, discountData);
-        toast.success("Discount updated successfully");
+        await updateDoc(doc(db, 'discounts', currentDiscount.id), discountData);
+        
+        // Update local state
+        setDiscounts(prev => 
+          prev.map(item => 
+            item.id === currentDiscount.id ? { ...item, ...discountData } : item
+          )
+        );
       } else {
         // Add new discount
-        discountData.createdAt = serverTimestamp();
-        await addDoc(collection(db, 'discounts'), discountData);
-        toast.success("Discount added successfully");
+        const newDiscountData = {
+          ...discountData,
+          usedCount: 0,
+          totalSavings: 0,
+          createdAt: new Date()
+        };
+        
+        const docRef = await addDoc(collection(db, 'discounts'), newDiscountData);
+        
+        // Update local state
+        setDiscounts(prev => [
+          { id: docRef.id, ...newDiscountData },
+          ...prev
+        ]);
       }
       
-      fetchDiscounts();
+      // Close modal and update statistics
       setShowModal(false);
-      resetForm();
-    } catch (error) {
-      console.error("Error saving discount:", error);
-      toast.error("Failed to save discount");
+      updateStats();
+      setError(null);
+    } catch (err) {
+      console.error('Error saving discount:', err);
+      setError('Failed to save discount. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
-  
-  const handleDeleteDiscount = async (discountId) => {
-    if (window.confirm("Are you sure you want to delete this discount?")) {
+
+  // Update statistics
+  const updateStats = () => {
+    const now = new Date();
+    let activeCount = 0;
+    let expiredCount = 0;
+    let totalUsage = 0;
+    let totalSavings = 0;
+    
+    discounts.forEach(discount => {
+      const endDate = discount.endDate ? new Date(discount.endDate) : null;
+      const isExpired = endDate && endDate < now;
+      
+      if (isExpired) {
+        expiredCount++;
+      } else if (discount.isActive) {
+        activeCount++;
+      }
+      
+      totalUsage += discount.usedCount || 0;
+      totalSavings += discount.totalSavings || 0;
+    });
+    
+    setStats({
+      activeDiscounts: activeCount,
+      expiredDiscounts: expiredCount,
+      totalUsage,
+      totalSavings
+    });
+    
+    // Update charts
+    initializeCharts(discounts);
+  };
+
+  // Delete a discount
+  const handleDeleteDiscount = async (id) => {
+    if (window.confirm('Are you sure you want to delete this discount code?')) {
       try {
-        await deleteDoc(doc(db, 'discounts', discountId));
-        toast.success("Discount deleted successfully");
-        fetchDiscounts();
-      } catch (error) {
-        console.error("Error deleting discount:", error);
-        toast.error("Failed to delete discount");
+        setLoading(true);
+        await deleteDoc(doc(db, 'discounts', id));
+        
+        // Update local state
+        setDiscounts(prev => prev.filter(item => item.id !== id));
+        updateStats();
+        setError(null);
+      } catch (err) {
+        console.error('Error deleting discount:', err);
+        setError('Failed to delete discount. Please try again.');
+      } finally {
+        setLoading(false);
       }
     }
   };
-  
-  const handleToggleStatus = async (discount) => {
+
+  // Toggle discount active status
+  const handleToggleActive = async (discount) => {
     try {
-      const discountRef = doc(db, 'discounts', discount.id);
-      await updateDoc(discountRef, { 
+      setLoading(true);
+      
+      await updateDoc(doc(db, 'discounts', discount.id), {
         isActive: !discount.isActive,
-        updatedAt: serverTimestamp()
+        updatedAt: new Date()
       });
-      toast.success(`Discount ${!discount.isActive ? 'activated' : 'deactivated'} successfully`);
-      fetchDiscounts();
-    } catch (error) {
-      console.error("Error updating discount status:", error);
-      toast.error("Failed to update discount status");
+      
+      // Update local state
+      setDiscounts(prev => 
+        prev.map(item => 
+          item.id === discount.id 
+            ? { ...item, isActive: !item.isActive } 
+            : item
+        )
+      );
+      
+      updateStats();
+      setError(null);
+    } catch (err) {
+      console.error('Error updating discount status:', err);
+      setError('Failed to update discount status. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
-  
+
+  // Copy coupon code to clipboard
+  const copyToClipboard = (code) => {
+    navigator.clipboard.writeText(code)
+      .then(() => {
+        setCouponCopied(code);
+        setTimeout(() => setCouponCopied(false), 2000);
+      })
+      .catch(err => {
+        console.error('Failed to copy code:', err);
+      });
+  };
+
+  // Check if discount is expired
+  const isDiscountExpired = (discount) => {
+    if (!discount.endDate) return false;
+    const now = new Date();
+    const endDate = new Date(discount.endDate);
+    return endDate < now;
+  };
+
+  // Toggle product selection for applicable/excluded products
+  const toggleProductSelection = (productId, type) => {
+    setCurrentDiscount(prev => {
+      if (type === 'applicable') {
+        const applicableProducts = prev.applicableProducts || [];
+        
+        if (applicableProducts.includes(productId)) {
+          return {
+            ...prev,
+            applicableProducts: applicableProducts.filter(id => id !== productId)
+          };
+        } else {
+          return {
+            ...prev,
+            applicableProducts: [...applicableProducts, productId],
+            excludedProducts: (prev.excludedProducts || []).filter(id => id !== productId)
+          };
+        }
+      } else {
+        const excludedProducts = prev.excludedProducts || [];
+        
+        if (excludedProducts.includes(productId)) {
+          return {
+            ...prev,
+            excludedProducts: excludedProducts.filter(id => id !== productId)
+          };
+        } else {
+          return {
+            ...prev,
+            excludedProducts: [...excludedProducts, productId],
+            applicableProducts: (prev.applicableProducts || []).filter(id => id !== productId)
+          };
+        }
+      }
+    });
+  };
+
   return (
-    <div className="d-flex">
-      <AdminSidebar />
-      <div className="flex-grow-1">
-        <AdminHeader title="Discount Management" />
-        <Container fluid className="py-3">
-          <Card className="shadow-sm">
-            <Card.Header className="d-flex justify-content-between align-items-center">
-              <h5 className="mb-0">Discounts & Coupons</h5>
-              <Button variant="primary" onClick={handleAddDiscount}>
-                Add New Discount
-              </Button>
-            </Card.Header>
+    <Container className="py-4">
+      {/* Stats Dashboard */}
+      <Row className="mb-4">
+        <Col md={3}>
+          <Card className="text-center mb-3">
+            <Card.Body className="bg-success bg-opacity-10">
+              <FaGift className="mb-2" size={24} color="#198754" />
+              <h3>{stats.activeDiscounts}</h3>
+              <p className="mb-0 text-success">Active Discounts</p>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={3}>
+          <Card className="text-center mb-3">
+            <Card.Body className="bg-danger bg-opacity-10">
+              <FaPercent className="mb-2" size={24} color="#dc3545" />
+              <h3>{stats.expiredDiscounts}</h3>
+              <p className="mb-0 text-danger">Expired Discounts</p>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={3}>
+          <Card className="text-center mb-3">
+            <Card.Body className="bg-primary bg-opacity-10">
+              <FaUsers className="mb-2" size={24} color="#0d6efd" />
+              <h3>{stats.totalUsage}</h3>
+              <p className="mb-0 text-primary">Total Redemptions</p>
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={3}>
+          <Card className="text-center mb-3">
+            <Card.Body className="bg-warning bg-opacity-10">
+              <FaRupeeSign className="mb-2" size={24} color="#ffc107" />
+              <h3>₹{stats.totalSavings.toFixed(2)}</h3>
+              <p className="mb-0 text-warning">Total Savings</p>
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+      
+      {/* Charts Row */}
+      <Row className="mb-4">
+        <Col md={7}>
+          <Card>
             <Card.Body>
-              {loading ? (
-                <p>Loading discounts...</p>
+              {!Chart ? (
+                <Alert variant="info">
+                  <FaChartLine className="me-2" /> 
+                  Charts require Chart.js. Please run: <code>npm install chart.js</code>
+                </Alert>
               ) : (
-                <div className="table-responsive">
-                  <Table striped bordered hover>
-                    <thead>
-                      <tr>
-                        <th>Code</th>
-                        <th>Type</th>
-                        <th>Value</th>
-                        <th>Min Amount</th>
-                        <th>Max Discount</th>
-                        <th>Valid Period</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {discounts.length > 0 ? (
-                        discounts.map(discount => (
-                          <tr key={discount.id}>
-                            <td>{discount.code}</td>
-                            <td>{discount.type === 'percentage' ? 'Percentage' : 'Fixed Amount'}</td>
-                            <td>
-                              {discount.type === 'percentage' ? `${discount.value}%` : `₹${discount.value}`}
-                            </td>
-                            <td>{discount.minAmount ? `₹${discount.minAmount}` : 'None'}</td>
-                            <td>{discount.maxAmount ? `₹${discount.maxAmount}` : 'None'}</td>
-                            <td>
-                              {discount.startDate && discount.endDate
-                                ? `${new Date(discount.startDate).toLocaleDateString()} - ${new Date(discount.endDate).toLocaleDateString()}`
-                                : 'Always Valid'}
-                            </td>
-                            <td>
-                              <span className={`badge bg-${discount.isActive ? 'success' : 'danger'}`}>
-                                {discount.isActive ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                            <td>
-                              <Button 
-                                variant="outline-primary" 
-                                size="sm" 
-                                className="me-2"
-                                onClick={() => handleEditDiscount(discount)}
-                              >
-                                Edit
-                              </Button>
-                              <Button 
-                                variant={discount.isActive ? "outline-warning" : "outline-success"} 
-                                size="sm"
-                                className="me-2"
-                                onClick={() => handleToggleStatus(discount)}
-                              >
-                                {discount.isActive ? 'Deactivate' : 'Activate'}
-                              </Button>
-                              <Button 
-                                variant="outline-danger" 
-                                size="sm"
-                                onClick={() => handleDeleteDiscount(discount.id)}
-                              >
-                                Delete
-                              </Button>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan="8" className="text-center">No discounts found</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </Table>
-                </div>
+                <canvas ref={usageChartRef} height="200"></canvas>
               )}
             </Card.Body>
           </Card>
-        </Container>
-        
-        {/* Add/Edit Discount Modal */}
-        <Modal show={showModal} onHide={() => setShowModal(false)}>
-          <Modal.Header closeButton>
-            <Modal.Title>{editMode ? 'Edit Discount' : 'Add New Discount'}</Modal.Title>
-          </Modal.Header>
+        </Col>
+        <Col md={5}>
+          <Card>
+            <Card.Body>
+              {!Chart ? (
+                <Alert variant="info">
+                  <FaChartLine className="me-2" /> 
+                  Charts require Chart.js. Please run: <code>npm install chart.js</code>
+                </Alert>
+              ) : (
+                <canvas ref={typeChartRef} height="200"></canvas>
+              )}
+            </Card.Body>
+          </Card>
+        </Col>
+      </Row>
+      
+      {/* Discounts Table */}
+      <Card className="mb-4">
+        <Card.Header className="bg-primary text-white d-flex justify-content-between align-items-center">
+          <h4 className="mb-0">Discount Codes</h4>
+          <Button 
+            variant="light" 
+            onClick={handleAddDiscount}
+          >
+            <FaPlus className="me-2" /> Create Discount
+          </Button>
+        </Card.Header>
+        <Card.Body>
+          {error && <Alert variant="danger">{error}</Alert>}
+          
+          {loading && <div className="text-center py-4">Loading discount codes...</div>}
+          
+          <Table responsive hover>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Value</th>
+                <th>Start Date</th>
+                <th>End Date</th>
+                <th>Usage</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {discounts.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="text-center py-4">
+                    No discount codes found. Create your first discount!
+                  </td>
+                </tr>
+              ) : (
+                discounts.map(discount => (
+                  <tr key={discount.id} className={isDiscountExpired(discount) ? 'table-danger' : ''}>
+                    <td>
+                      <div className="d-flex align-items-center">
+                        <span className="fw-bold me-2">{discount.code}</span>
+                        <OverlayTrigger
+                          placement="top"
+                          overlay={
+                            <Tooltip id={`tooltip-${discount.id}`}>
+                              {couponCopied === discount.code ? 'Copied!' : 'Copy to clipboard'}
+                            </Tooltip>
+                          }
+                        >
+                          <Button 
+                            variant="link" 
+                            className="p-0 text-primary"
+                            onClick={() => copyToClipboard(discount.code)}
+                          >
+                            {couponCopied === discount.code ? <FaCheck /> : <FaCopy />}
+                          </Button>
+                        </OverlayTrigger>
+                      </div>
+                      <small className="text-muted d-block">{discount.description}</small>
+                    </td>
+                    <td>
+                      {discount.type === 'percentage' ? 
+                        `${discount.value}%` : 
+                        `₹${discount.value}`
+                      }
+                      {discount.maxDiscount && discount.type === 'percentage' && (
+                        <small className="text-muted d-block">
+                          Max: ₹{discount.maxDiscount}
+                        </small>
+                      )}
+                      {discount.minOrderAmount > 0 && (
+                        <small className="text-muted d-block">
+                          Min order: ₹{discount.minOrderAmount}
+                        </small>
+                      )}
+                    </td>
+                    <td>{new Date(discount.startDate).toLocaleDateString()}</td>
+                    <td>
+                      {discount.endDate ? 
+                        new Date(discount.endDate).toLocaleDateString() : 
+                        'No expiry'
+                      }
+                    </td>
+                    <td>
+                      {discount.usedCount || 0} / {discount.usageLimit || '∞'}
+                      <div>
+                        <small className="text-muted">
+                          Savings: ₹{(discount.totalSavings || 0).toFixed(2)}
+                        </small>
+                      </div>
+                    </td>
+                    <td>
+                      {isDiscountExpired(discount) ? (
+                        <Badge bg="danger">Expired</Badge>
+                      ) : (
+                        <Form.Check
+                          type="switch"
+                          id={`status-${discount.id}`}
+                          checked={discount.isActive}
+                          onChange={() => handleToggleActive(discount)}
+                          label={discount.isActive ? 'Active' : 'Inactive'}
+                        />
+                      )}
+                    </td>
+                    <td>
+                      <Button 
+                        variant="outline-primary" 
+                        size="sm"
+                        className="me-2 mb-1"
+                        onClick={() => handleEditDiscount(discount)}
+                      >
+                        <FaEdit /> Edit
+                      </Button>
+                      <Button 
+                        variant="outline-danger"
+                        size="sm"
+                        onClick={() => handleDeleteDiscount(discount.id)}
+                      >
+                        <FaTrash /> Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </Table>
+        </Card.Body>
+      </Card>
+      
+      {/* Discount Form Modal */}
+      <Modal 
+        show={showModal} 
+        onHide={() => setShowModal(false)}
+        size="lg"
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>
+            {isEditing ? 'Edit Discount Code' : 'Create New Discount Code'}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
           <Form onSubmit={handleSubmit}>
-            <Modal.Body>
-              <Form.Group className="mb-3">
-                <Form.Label>Discount Code</Form.Label>
-                <Form.Control 
-                  type="text" 
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  required
-                  placeholder="e.g. SUMMER20"
-                />
-                <Form.Text className="text-muted">
-                  Code will be converted to uppercase automatically.
-                </Form.Text>
-              </Form.Group>
-              
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label>Discount Type</Form.Label>
-                    <Form.Select 
-                      value={discountType}
-                      onChange={(e) => setDiscountType(e.target.value)}
+            <Row>
+              <Col md={8}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Discount Code*</Form.Label>
+                  <InputGroup>
+                    <Form.Control
+                      type="text"
+                      name="code"
+                      value={currentDiscount.code}
+                      onChange={handleInputChange}
                       required
+                      placeholder="e.g., SUMMER25"
+                      style={{ textTransform: 'uppercase' }}
+                    />
+                    <Button 
+                      variant="outline-secondary"
+                      onClick={generateCouponCode}
                     >
-                      <option value="percentage">Percentage (%)</option>
-                      <option value="fixed">Fixed Amount (₹)</option>
-                    </Form.Select>
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label>
-                      {discountType === 'percentage' ? 'Percentage Value (%)' : 'Discount Amount (₹)'}
-                    </Form.Label>
-                    <Form.Control 
-                      type="number" 
-                      value={value}
-                      onChange={(e) => setValue(e.target.value)}
+                      Generate
+                    </Button>
+                  </InputGroup>
+                </Form.Group>
+              </Col>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Type</Form.Label>
+                  <Form.Select
+                    name="type"
+                    value={currentDiscount.type}
+                    onChange={handleInputChange}
+                  >
+                    <option value="percentage">Percentage</option>
+                    <option value="fixed">Fixed Amount</option>
+                  </Form.Select>
+                </Form.Group>
+              </Col>
+            </Row>
+            
+            <Row>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>
+                    {currentDiscount.type === 'percentage' ? 'Percentage*' : 'Amount*'}
+                  </Form.Label>
+                  <InputGroup>
+                    <Form.Control
+                      type="number"
+                      name="value"
+                      value={currentDiscount.value}
+                      onChange={handleInputChange}
                       required
                       min="0"
-                      step={discountType === 'percentage' ? '1' : '0.01'}
-                      max={discountType === 'percentage' ? '100' : ''}
+                      step={currentDiscount.type === 'percentage' ? '1' : '0.01'}
+                      max={currentDiscount.type === 'percentage' ? '100' : ''}
+                      placeholder={currentDiscount.type === 'percentage' ? '10' : '100'}
                     />
-                  </Form.Group>
-                </Col>
-              </Row>
-              
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label>Minimum Order Amount (₹)</Form.Label>
-                    <Form.Control 
-                      type="number" 
-                      value={minAmount}
-                      onChange={(e) => setMinAmount(e.target.value)}
+                    <InputGroup.Text>
+                      {currentDiscount.type === 'percentage' ? '%' : '₹'}
+                    </InputGroup.Text>
+                  </InputGroup>
+                </Form.Group>
+              </Col>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Minimum Order Amount</Form.Label>
+                  <InputGroup>
+                    <InputGroup.Text>₹</InputGroup.Text>
+                    <Form.Control
+                      type="number"
+                      name="minOrderAmount"
+                      value={currentDiscount.minOrderAmount}
+                      onChange={handleInputChange}
                       min="0"
                       step="0.01"
-                      placeholder="Optional"
+                      placeholder="0"
                     />
-                  </Form.Group>
-                </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label>Maximum Discount Amount (₹)</Form.Label>
-                    <Form.Control 
-                      type="number" 
-                      value={maxAmount}
-                      onChange={(e) => setMaxAmount(e.target.value)}
+                  </InputGroup>
+                  <Form.Text className="text-muted">
+                    Minimum cart value required
+                  </Form.Text>
+                </Form.Group>
+              </Col>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>
+                    {currentDiscount.type === 'percentage' ? 'Maximum Discount' : 'Usage Limit'}
+                  </Form.Label>
+                  <InputGroup>
+                    <InputGroup.Text>
+                      {currentDiscount.type === 'percentage' ? '₹' : '#'}
+                    </InputGroup.Text>
+                    <Form.Control
+                      type="number"
+                      name={currentDiscount.type === 'percentage' ? 'maxDiscount' : 'usageLimit'}
+                      value={currentDiscount.type === 'percentage' ? currentDiscount.maxDiscount : currentDiscount.usageLimit}
+                      onChange={handleInputChange}
                       min="0"
-                      step="0.01"
-                      placeholder="Optional"
+                      step={currentDiscount.type === 'percentage' ? '0.01' : '1'}
+                      placeholder={currentDiscount.type === 'percentage' ? '200' : '100'}
                     />
-                  </Form.Group>
-                </Col>
-              </Row>
-              
-              <Row>
-                <Col md={6}>
+                  </InputGroup>
+                  <Form.Text className="text-muted">
+                    {currentDiscount.type === 'percentage' ? 'Maximum discount amount' : 'Number of times this code can be used'}
+                  </Form.Text>
+                </Form.Group>
+              </Col>
+            </Row>
+            
+            <Row>
+              {currentDiscount.type !== 'percentage' && (
+                <Col md={4}>
                   <Form.Group className="mb-3">
-                    <Form.Label>Start Date</Form.Label>
-                    <Form.Control 
-                      type="date" 
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
+                    <Form.Label>Usage Limit</Form.Label>
+                    <Form.Control
+                      type="number"
+                      name="usageLimit"
+                      value={currentDiscount.usageLimit}
+                      onChange={handleInputChange}
+                      min="0"
+                      step="1"
+                      placeholder="Leave empty for unlimited"
                     />
+                    <Form.Text className="text-muted">
+                      Number of times this code can be used
+                    </Form.Text>
                   </Form.Group>
                 </Col>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label>End Date</Form.Label>
-                    <Form.Control 
-                      type="date" 
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      min={startDate}
+              )}
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Start Date*</Form.Label>
+                  <Form.Control
+                    type="date"
+                    name="startDate"
+                    value={currentDiscount.startDate}
+                    onChange={handleInputChange}
+                    required
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>End Date</Form.Label>
+                  <Form.Control
+                    type="date"
+                    name="endDate"
+                    value={currentDiscount.endDate}
+                    onChange={handleInputChange}
+                  />
+                  <Form.Text className="text-muted">
+                    Leave empty for no expiry
+                  </Form.Text>
+                </Form.Group>
+              </Col>
+            </Row>
+            
+            <Form.Group className="mb-3">
+              <Form.Label>Description</Form.Label>
+              <Form.Control
+                type="text"
+                name="description"
+                value={currentDiscount.description}
+                onChange={handleInputChange}
+                placeholder="e.g., Summer sale discount"
+              />
+            </Form.Group>
+            
+            <Row>
+              <Col md={12}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Product Restrictions</Form.Label>
+                  <InputGroup className="mb-2">
+                    <Form.Control
+                      type="text"
+                      placeholder="Search products by name"
+                      value={productSearchTerm}
+                      onChange={(e) => setProductSearchTerm(e.target.value)}
                     />
-                  </Form.Group>
-                </Col>
-              </Row>
-              
-              <Form.Group className="mb-3">
-                <Form.Check 
-                  type="checkbox" 
-                  label="Active" 
-                  checked={isActive}
-                  onChange={(e) => setIsActive(e.target.checked)}
-                />
-              </Form.Group>
-            </Modal.Body>
-            <Modal.Footer>
+                  </InputGroup>
+                  
+                  <Row>
+                    <Col md={6}>
+                      <Card className="mb-3" style={{ height: '200px', overflowY: 'auto' }}>
+                        <Card.Header className="bg-success bg-opacity-10">
+                          <div className="d-flex justify-content-between align-items-center">
+                            <span>Applicable Products</span>
+                            <Badge bg="success">
+                              {currentDiscount.applicableProducts?.length || 0}
+                            </Badge>
+                          </div>
+                        </Card.Header>
+                        <Card.Body>
+                          {products
+                            .filter(product => 
+                              product.name.toLowerCase().includes(productSearchTerm.toLowerCase())
+                            )
+                            .map(product => (
+                              <Form.Check
+                                key={product.id}
+                                type="checkbox"
+                                id={`applicable-${product.id}`}
+                                label={product.name}
+                                checked={(currentDiscount.applicableProducts || []).includes(product.id)}
+                                onChange={() => toggleProductSelection(product.id, 'applicable')}
+                                className="mb-2"
+                              />
+                            ))
+                          }
+                          {products.length === 0 && (
+                            <div className="text-center py-3">
+                              No products found
+                            </div>
+                          )}
+                        </Card.Body>
+                      </Card>
+                      <Form.Text className="text-muted">
+                        If none selected, the discount applies to all products
+                      </Form.Text>
+                    </Col>
+                    <Col md={6}>
+                      <Card className="mb-3" style={{ height: '200px', overflowY: 'auto' }}>
+                        <Card.Header className="bg-danger bg-opacity-10">
+                          <div className="d-flex justify-content-between align-items-center">
+                            <span>Excluded Products</span>
+                            <Badge bg="danger">
+                              {currentDiscount.excludedProducts?.length || 0}
+                            </Badge>
+                          </div>
+                        </Card.Header>
+                        <Card.Body>
+                          {products
+                            .filter(product => 
+                              product.name.toLowerCase().includes(productSearchTerm.toLowerCase())
+                            )
+                            .map(product => (
+                              <Form.Check
+                                key={product.id}
+                                type="checkbox"
+                                id={`excluded-${product.id}`}
+                                label={product.name}
+                                checked={(currentDiscount.excludedProducts || []).includes(product.id)}
+                                onChange={() => toggleProductSelection(product.id, 'excluded')}
+                                className="mb-2"
+                              />
+                            ))
+                          }
+                          {products.length === 0 && (
+                            <div className="text-center py-3">
+                              No products found
+                            </div>
+                          )}
+                        </Card.Body>
+                      </Card>
+                    </Col>
+                  </Row>
+                </Form.Group>
+              </Col>
+            </Row>
+            
+            <Form.Group className="mb-3">
+              <Form.Check
+                type="switch"
+                id="discount-active"
+                name="isActive"
+                checked={currentDiscount.isActive}
+                onChange={handleInputChange}
+                label="Active"
+              />
+            </Form.Group>
+            
+            <div className="d-flex justify-content-end gap-2 mt-2">
               <Button variant="secondary" onClick={() => setShowModal(false)}>
                 Cancel
               </Button>
-              <Button variant="primary" type="submit">
-                {editMode ? 'Update Discount' : 'Add Discount'}
+              <Button type="submit" variant="primary" disabled={loading}>
+                {loading ? 'Saving...' : (isEditing ? 'Update Discount' : 'Create Discount')}
               </Button>
-            </Modal.Footer>
+            </div>
           </Form>
-        </Modal>
-      </div>
-    </div>
+        </Modal.Body>
+      </Modal>
+    </Container>
   );
 }
 

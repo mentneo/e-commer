@@ -5,10 +5,11 @@ import { FaShoppingCart, FaUser, FaSignOutAlt, FaStore, FaClipboardList } from '
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 import { toast } from 'react-toastify';
+import './Header.css';
 
 function Header() {
   const { currentUser, logout, userRole } = useAuth();
-  const { totalItems } = useCart();
+  const { itemsCount } = useCart();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -32,16 +33,15 @@ function Header() {
             <Nav.Link as={Link} to="/products">Products</Nav.Link>
           </Nav>
           <Nav>
-            <Nav.Link as={Link} to="/cart" className="position-relative">
+            <Nav.Link as={Link} to="/cart" className="cart-icon-container">
               <FaShoppingCart size={20} />
-              {totalItems > 0 && (
+              {itemsCount > 0 && (
                 <Badge 
                   bg="danger" 
                   pill 
-                  className="position-absolute"
-                  style={{ top: '-8px', right: '-8px', fontSize: '0.6rem' }}
+                  className="cart-badge"
                 >
-                  {totalItems}
+                  {itemsCount}
                 </Badge>
               )}
             </Nav.Link>
@@ -55,21 +55,22 @@ function Header() {
                   </span>
                 } 
                 id="basic-nav-dropdown"
+                className="user-dropdown"
               >
                 {userRole === 'admin' && (
                   <NavDropdown.Item as={Link} to="/admin/dashboard">
-                    <FaStore className="me-2" /> Admin Dashboard
+                    <FaStore /> Admin Dashboard
                   </NavDropdown.Item>
                 )}
                 <NavDropdown.Item as={Link} to="/profile">
-                  <FaUser className="me-2" /> Profile
+                  <FaUser /> Profile
                 </NavDropdown.Item>
                 <NavDropdown.Item as={Link} to="/orders">
-                  <FaClipboardList className="me-2" /> My Orders
+                  <FaClipboardList /> My Orders
                 </NavDropdown.Item>
                 <NavDropdown.Divider />
                 <NavDropdown.Item onClick={handleLogout}>
-                  <FaSignOutAlt className="me-2" /> Logout
+                  <FaSignOutAlt /> Logout
                 </NavDropdown.Item>
               </NavDropdown>
             ) : (

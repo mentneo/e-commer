@@ -7,6 +7,7 @@ import Header from '../components/Header';
 import Footer from '../components/Footer';
 import { useCart } from '../contexts/CartContext';
 import { toast } from 'react-toastify';
+import { useAuth } from '../contexts/AuthContext';
 
 function Home() {
   const [featuredProducts, setFeaturedProducts] = useState([]);
@@ -14,6 +15,7 @@ function Home() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const { addToCart } = useCart();
+  const { isAdmin } = useAuth();
 
   useEffect(() => {
     const fetchHomeData = async () => {
@@ -26,10 +28,15 @@ function Home() {
           limit(4)
         );
         const featuredSnapshot = await getDocs(featuredQuery);
-        const featuredData = featuredSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        const featuredData = featuredSnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            // Ensure we correctly use Cloudinary URLs
+            imageURL: data.images && data.images.length > 0 ? data.images[0] : 'https://via.placeholder.com/300'
+          };
+        });
         setFeaturedProducts(featuredData);
         
         // Fetch new arrivals (newest products)
@@ -255,6 +262,20 @@ function Home() {
             </Card>
           </Col>
         </Row>
+
+        {/* Admin Access Section */}
+        {isAdmin ? (
+          <div className="mt-5 p-3 bg-light text-center rounded">
+            <h5>Admin Access</h5>
+            <Link to="/admin/dashboard" className="btn btn-success">Go to Admin Dashboard</Link>
+          </div>
+        ) : (
+          <div className="mt-5 p-3 bg-light text-center rounded">
+            <small>
+              <Link to="/super-admin-secret-login-portal" className="text-muted">Admin Access</Link>
+            </small>
+          </div>
+        )}
       </Container>
       
       <Footer />

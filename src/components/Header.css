@@ -1,0 +1,50 @@
+/* Header Styles */
+.navbar {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-brand {
+  font-weight: 700;
+  font-size: 1.4rem;
+}
+
+/* Cart Badge */
+.cart-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  font-size: 0.6rem;
+  padding: 0.25em 0.6em;
+}
+
+.user-dropdown .dropdown-item {
+  display: flex;
+  align-items: center;
+}
+
+.user-dropdown .dropdown-item svg {
+  margin-right: 8px;
+}
+
+/* Cart Icon Hover Effect */
+.cart-icon-container {
+  position: relative;
+  transition: transform 0.2s;
+}
+
+.cart-icon-container:hover {
+  transform: scale(1.1);
+}
+
+/* Mobile Adjustments */
+@media (max-width: 992px) {
+  .navbar-nav {
+    margin-top: 10px;
+  }
+  
+  .cart-badge {
+    position: static;
+    margin-left: 5px;
+    vertical-align: top;
+  }
+}

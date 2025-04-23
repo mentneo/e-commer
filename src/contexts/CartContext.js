@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useAuth } from './AuthContext';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase';
+import { useAuth } from './AuthContext';
+import { toast } from 'react-toastify';
 
 const CartContext = createContext();
 
@@ -12,88 +13,127 @@ export function useCart() {
 export function CartProvider({ children }) {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const { currentUser } = useAuth();
 
-  // Load cart from localStorage or Firestore
+  // Fetch cart from Firestore or local storage
   useEffect(() => {
-    const fetchCart = async () => {
+    async function fetchCart() {
       try {
         if (currentUser) {
-          // Fetch cart from Firestore for logged-in users
+          // User is logged in, fetch cart from Firestore
           const cartRef = doc(db, 'carts', currentUser.uid);
-          const cartSnap = await getDoc(cartRef);
+          const cartDoc = await getDoc(cartRef);
           
-          if (cartSnap.exists()) {
-            setCart(cartSnap.data().items || []);
+          if (cartDoc.exists()) {
+            setCart(cartDoc.data().items || []);
           } else {
+            // Create an empty cart document for the user
+            await setDoc(cartRef, { items: [] });
             setCart([]);
           }
         } else {
-          // Use localStorage for guests
-          const savedCart = localStorage.getItem('cart');
-          if (savedCart) {
-            setCart(JSON.parse(savedCart));
+          // User is not logged in, get cart from local storage
+          const localCart = localStorage.getItem('ecommerCart');
+          if (localCart) {
+            setCart(JSON.parse(localCart));
           }
         }
-      } catch (error) {
-        console.error("Error fetching cart:", error);
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching cart:', err);
+        // Handle permission denied errors by falling back to local storage
+        if (err.code === 'permission-denied') {
+          const localCart = localStorage.getItem('ecommerCart');
+          if (localCart) {
+            setCart(JSON.parse(localCart));
+          }
+          setError("Using local cart: You'll need to log in to save your cart.");
+        } else {
+          setError('Failed to load cart. Please try again.');
+          toast.error('Failed to load cart. Please try again.', {
+            position: "top-right",
+            autoClose: 3000
+          });
+        }
       } finally {
         setLoading(false);
       }
-    };
+    }
 
     fetchCart();
   }, [currentUser]);
 
-  // Save cart to localStorage or Firestore whenever it changes
+  // Save cart to Firestore or local storage
   useEffect(() => {
     if (loading) return;
-    
-    if (currentUser) {
-      // Save to Firestore for logged-in users
-      const saveCart = async () => {
-        try {
+
+    async function saveCart() {
+      try {
+        if (currentUser) {
+          // User is logged in, save cart to Firestore
           const cartRef = doc(db, 'carts', currentUser.uid);
-          await setDoc(cartRef, { items: cart, updatedAt: new Date().toISOString() });
-        } catch (error) {
-          console.error("Error saving cart to Firestore:", error);
+          await setDoc(cartRef, { items: cart }, { merge: true });
+        } else {
+          // User is not logged in, save to local storage
+          localStorage.setItem('ecommerCart', JSON.stringify(cart));
         }
-      };
+      } catch (err) {
+        console.error('Error saving cart:', err);
+        // If there's a permission error, save to local storage as fallback
+        if (err.code === 'permission-denied') {
+          localStorage.setItem('ecommerCart', JSON.stringify(cart));
+          setError("Using local cart: You'll need to log in to save your cart.");
+        } else {
+          toast.error('Failed to save cart. Please try again.', {
+            position: "top-right",
+            autoClose: 3000
+          });
+        }
+      }
+    }
+
+    // Skip initial empty cart save
+    if (cart.length > 0 || currentUser) {
       saveCart();
-    } else {
-      // Save to localStorage for guests
-      localStorage.setItem('cart', JSON.stringify(cart));
     }
   }, [cart, currentUser, loading]);
 
-  // Add item to cart
-  const addToCart = (product, quantity = 1) => {
+  // Add product to cart
+  const addToCart = (product) => {
     setCart(prevCart => {
-      const existingItem = prevCart.find(item => item.id === product.id);
+      const existingItemIndex = prevCart.findIndex(item => item.id === product.id);
       
-      if (existingItem) {
-        return prevCart.map(item => 
-          item.id === product.id 
-            ? { ...item, quantity: item.quantity + quantity } 
-            : item
-        );
+      if (existingItemIndex !== -1) {
+        // Item already in cart, update quantity
+        const updatedCart = [...prevCart];
+        updatedCart[existingItemIndex].quantity += product.quantity || 1;
+        return updatedCart;
       } else {
-        return [...prevCart, { ...product, quantity }];
+        // Item not in cart, add it
+        return [...prevCart, { ...product, quantity: product.quantity || 1 }];
       }
+    });
+    
+    toast.success('Added to cart!', {
+      position: "top-right",
+      autoClose: 2000
     });
   };
 
-  // Remove item from cart
+  // Remove product from cart
   const removeFromCart = (productId) => {
     setCart(prevCart => prevCart.filter(item => item.id !== productId));
+    
+    toast.info('Removed from cart', {
+      position: "top-right",
+      autoClose: 2000
+    });
   };
 
-  // Update item quantity
+  // Update product quantity
   const updateQuantity = (productId, quantity) => {
-    if (quantity <= 0) {
-      removeFromCart(productId);
-      return;
-    }
+    if (quantity < 1) return;
     
     setCart(prevCart => 
       prevCart.map(item => 
@@ -107,21 +147,24 @@ export function CartProvider({ children }) {
     setCart([]);
   };
 
-  // Calculate total items in cart
-  const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+  // Calculate total price
+  const calculateTotal = () => {
+    return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
+  };
 
-  // Calculate subtotal
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  // Calculate items count
+  const itemsCount = cart.reduce((count, item) => count + item.quantity, 0);
 
   const value = {
     cart,
+    loading,
+    error,
     addToCart,
     removeFromCart,
     updateQuantity,
     clearCart,
-    totalItems,
-    subtotal,
-    loading
+    calculateTotal,
+    itemsCount
   };
 
   return (

@@ -1,311 +1,315 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Row, Col, Card, Button, Form, Pagination, Spinner } from 'react-bootstrap';
-import { Link, useLocation } from 'react-router-dom';
-import { collection, query, getDocs, where, orderBy, startAfter, limit } from 'firebase/firestore';
+import { Container, Row, Col, Card, Button, Form, InputGroup, Dropdown, DropdownButton, Pagination } from 'react-bootstrap';
+import { Link } from 'react-router-dom';
+import { collection, getDocs, query, where, orderBy, limit, startAfter } from 'firebase/firestore';
 import { db } from '../firebase';
-import Header from '../components/Header';
-import Footer from '../components/Footer';
+import { FaSearch, FaFilter, FaStar, FaShoppingCart } from 'react-icons/fa';
+import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
-import { toast } from 'react-toastify';
 
 function Products() {
   const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState('');
-  const [sortBy, setSortBy] = useState('name-asc');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [error, setError] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [category, setCategory] = useState('all');
+  const [priceRange, setPriceRange] = useState('all');
+  const [sortBy, setSortBy] = useState('popularity');
+  const [page, setPage] = useState(1);
   const [lastVisible, setLastVisible] = useState(null);
   const [hasMore, setHasMore] = useState(true);
+  const productsPerPage = 12;
   
   const { addToCart } = useCart();
-  const location = useLocation();
-  const PRODUCTS_PER_PAGE = 12;
+
+  // Define categories and price ranges for filtering
+  const categories = ['Electronics', 'Clothing', 'Home & Kitchen', 'Books', 'Toys', 'Beauty'];
+  const priceRanges = [
+    { label: 'Under ₹500', value: 'under500', min: 0, max: 500 },
+    { label: '₹500 - ₹1000', value: '500-1000', min: 500, max: 1000 },
+    { label: '₹1000 - ₹5000', value: '1000-5000', min: 1000, max: 5000 },
+    { label: 'Above ₹5000', value: 'above5000', min: 5000, max: Infinity }
+  ];
   
-  // Check if a category was passed via URL
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const categoryParam = params.get('category');
-    if (categoryParam) {
-      setSelectedCategory(categoryParam);
-    }
-  }, [location]);
-  
-  // Fetch categories
-  useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const productsRef = collection(db, 'products');
-        const productsSnapshot = await getDocs(productsRef);
-        
-        // Extract unique categories
-        const uniqueCategories = new Set();
-        productsSnapshot.docs.forEach(doc => {
-          const product = doc.data();
-          if (product.category) {
-            uniqueCategories.add(product.category);
-          }
-        });
-        
-        setCategories(Array.from(uniqueCategories).sort());
-      } catch (error) {
-        console.error("Error fetching categories:", error);
+  // Function to fetch products from Firestore
+  const fetchProducts = async (reset = false) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // If reset is true, reset pagination
+      if (reset) {
+        setPage(1);
+        setLastVisible(null);
       }
-    };
-    
-    fetchCategories();
-  }, []);
-  
-  // Fetch products
-  useEffect(() => {
-    const fetchProducts = async (isFirstPage = true) => {
-      try {
-        setLoading(true);
-        
-        let productsQuery;
-        const productsRef = collection(db, 'products');
-        
-        // Build query based on filters
-        let baseQuery = [];
-        
-        if (selectedCategory) {
-          baseQuery.push(where('category', '==', selectedCategory));
+      
+      let productsQuery = collection(db, 'products');
+      let constraints = [];
+      
+      // Apply category filter
+      if (category !== 'all') {
+        constraints.push(where('category', '==', category));
+      }
+      
+      // Apply price range filter
+      if (priceRange !== 'all') {
+        const selectedRange = priceRanges.find(range => range.value === priceRange);
+        if (selectedRange) {
+          constraints.push(where('price', '>=', selectedRange.min));
+          if (selectedRange.max !== Infinity) {
+            constraints.push(where('price', '<=', selectedRange.max));
+          }
         }
-        
-        // Determine sort order
-        let sortField, sortDirection;
-        switch (sortBy) {
-          case 'price-asc':
-            sortField = 'price';
-            sortDirection = 'asc';
-            break;
-          case 'price-desc':
-            sortField = 'price';
-            sortDirection = 'desc';
-            break;
-          case 'name-desc':
-            sortField = 'name';
-            sortDirection = 'desc';
-            break;
-          case 'name-asc':
-          default:
-            sortField = 'name';
-            sortDirection = 'asc';
-        }
-        
-        baseQuery.push(orderBy(sortField, sortDirection));
-        
-        // For pagination, if not first page, start after last visible document
-        if (!isFirstPage && lastVisible) {
-          productsQuery = query(
-            productsRef,
-            ...baseQuery,
-            startAfter(lastVisible),
-            limit(PRODUCTS_PER_PAGE)
-          );
-        } else {
-          productsQuery = query(
-            productsRef,
-            ...baseQuery,
-            limit(PRODUCTS_PER_PAGE)
-          );
-        }
-        
-        const productsSnapshot = await getDocs(productsQuery);
-        
-        // Set last document for pagination
-        const lastDoc = productsSnapshot.docs[productsSnapshot.docs.length - 1];
-        setLastVisible(lastDoc || null);
-        
-        // Check if there are more results
-        setHasMore(productsSnapshot.docs.length === PRODUCTS_PER_PAGE);
-        
-        // Map documents to products
-        let productsData = productsSnapshot.docs.map(doc => ({
+      }
+      
+      // Apply sorting
+      let sortField = 'createdAt';
+      let sortDirection = 'desc';
+      
+      switch (sortBy) {
+        case 'priceAsc':
+          sortField = 'price';
+          sortDirection = 'asc';
+          break;
+        case 'priceDesc':
+          sortField = 'price';
+          sortDirection = 'desc';
+          break;
+        case 'newest':
+          sortField = 'createdAt';
+          sortDirection = 'desc';
+          break;
+        case 'popularity':
+        default:
+          sortField = 'popularity';
+          sortDirection = 'desc';
+          break;
+      }
+      
+      constraints.push(orderBy(sortField, sortDirection));
+      
+      // Apply pagination
+      constraints.push(limit(productsPerPage));
+      if (lastVisible && !reset) {
+        constraints.push(startAfter(lastVisible));
+      }
+      
+      const q = query(productsQuery, ...constraints);
+      const querySnapshot = await getDocs(q);
+      
+      const fetchedProducts = [];
+      querySnapshot.forEach((doc) => {
+        fetchedProducts.push({
           id: doc.id,
           ...doc.data()
-        }));
-        
-        // Filter by search term if provided
-        if (searchTerm.trim()) {
-          const term = searchTerm.toLowerCase();
-          productsData = productsData.filter(product => 
-            product.name.toLowerCase().includes(term) ||
-            product.description.toLowerCase().includes(term)
-          );
-        }
-        
-        // Update or append products based on whether this is the first page
-        if (isFirstPage) {
-          setProducts(productsData);
-        } else {
-          setProducts(prev => [...prev, ...productsData]);
-        }
-      } catch (error) {
-        console.error("Error fetching products:", error);
-      } finally {
-        setLoading(false);
+        });
+      });
+      
+      // Update lastVisible for pagination
+      const lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
+      setLastVisible(lastDoc);
+      
+      // Check if there are more products
+      setHasMore(querySnapshot.docs.length === productsPerPage);
+      
+      // If it's the first page or a reset, replace products. Otherwise, append.
+      if (page === 1 || reset) {
+        setProducts(fetchedProducts);
+      } else {
+        setProducts(prev => [...prev, ...fetchedProducts]);
       }
-    };
-    
-    // Reset pagination and fetch first page when filters change
-    setLastVisible(null);
+      
+      setPage(prev => reset ? 1 : prev + 1);
+    } catch (err) {
+      console.error('Error fetching products:', err);
+      setError('Failed to load products. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Handle search query
+  const handleSearch = () => {
+    // For a real search with Firestore, you might want to use a Cloud Function
+    // For now, we'll just filter client-side or reset filters and fetch all products
     fetchProducts(true);
-  }, [selectedCategory, sortBy, searchTerm]);
+  };
+  
+  // Fetch products on initial load and when filters change
+  useEffect(() => {
+    fetchProducts(true);
+  }, [category, priceRange, sortBy]);
+  
+  // Handle category filter change
+  const handleCategoryChange = (cat) => {
+    setCategory(cat);
+  };
+  
+  // Handle price range filter change
+  const handlePriceRangeChange = (range) => {
+    setPriceRange(range);
+  };
+  
+  // Handle sort by change
+  const handleSortByChange = (sort) => {
+    setSortBy(sort);
+  };
   
   // Load more products
   const loadMoreProducts = () => {
-    if (hasMore && !loading) {
-      const fetchNextPage = async () => {
-        await fetchProducts(false);
-      };
-      fetchNextPage();
-    }
+    fetchProducts(false);
   };
   
-  // Handle add to cart
+  // Add product to cart
   const handleAddToCart = (product) => {
-    addToCart(product, 1);
-    toast.success(`${product.name} added to cart!`);
+    addToCart({
+      id: product.id,
+      name: product.name,
+      price: product.price,
+      image: product.images && product.images.length > 0 ? product.images[0] : null,
+      quantity: 1
+    });
   };
   
   return (
-    <>
-      <Header />
-      <Container className="py-4">
-        <h1 className="mb-4">Products</h1>
-        
-        {/* Filters and Search */}
-        <Row className="mb-4">
-          <Col md={3} className="mb-3 mb-md-0">
-            <Form.Group>
-              <Form.Label>Category</Form.Label>
-              <Form.Select 
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
+    <Container className="my-5">
+      <h2 className="mb-4">Shop Our Products</h2>
+      
+      {/* Search and Filter Bar */}
+      <Row className="mb-4">
+        <Col md={6} className="mb-3 mb-md-0">
+          <InputGroup>
+            <Form.Control
+              placeholder="Search products..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+            />
+            <Button variant="primary" onClick={handleSearch}>
+              <FaSearch /> Search
+            </Button>
+          </InputGroup>
+        </Col>
+        <Col md={2} className="mb-3 mb-md-0">
+          <DropdownButton id="category-dropdown" title="Category" variant="outline-secondary" className="w-100">
+            <Dropdown.Item active={category === 'all'} onClick={() => handleCategoryChange('all')}>
+              All Categories
+            </Dropdown.Item>
+            {categories.map((cat, index) => (
+              <Dropdown.Item 
+                key={index} 
+                active={category === cat}
+                onClick={() => handleCategoryChange(cat)}
               >
-                <option value="">All Categories</option>
-                {categories.map((category, index) => (
-                  <option key={index} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-          </Col>
-          
-          <Col md={3} className="mb-3 mb-md-0">
-            <Form.Group>
-              <Form.Label>Sort By</Form.Label>
-              <Form.Select 
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
+                {cat}
+              </Dropdown.Item>
+            ))}
+          </DropdownButton>
+        </Col>
+        <Col md={2} className="mb-3 mb-md-0">
+          <DropdownButton id="price-dropdown" title="Price" variant="outline-secondary" className="w-100">
+            <Dropdown.Item active={priceRange === 'all'} onClick={() => handlePriceRangeChange('all')}>
+              All Prices
+            </Dropdown.Item>
+            {priceRanges.map((range, index) => (
+              <Dropdown.Item 
+                key={index} 
+                active={priceRange === range.value}
+                onClick={() => handlePriceRangeChange(range.value)}
               >
-                <option value="name-asc">Name (A-Z)</option>
-                <option value="name-desc">Name (Z-A)</option>
-                <option value="price-asc">Price (Low to High)</option>
-                <option value="price-desc">Price (High to Low)</option>
-              </Form.Select>
-            </Form.Group>
-          </Col>
-          
-          <Col md={6}>
-            <Form.Group>
-              <Form.Label>Search</Form.Label>
-              <Form.Control
-                type="text"
-                placeholder="Search products..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </Form.Group>
-          </Col>
-        </Row>
-        
-        {/* Products Grid */}
-        {loading && products.length === 0 ? (
-          <div className="text-center my-5">
-            <Spinner animation="border" variant="primary" />
-            <p className="mt-3">Loading products...</p>
+                {range.label}
+              </Dropdown.Item>
+            ))}
+          </DropdownButton>
+        </Col>
+        <Col md={2}>
+          <DropdownButton id="sort-dropdown" title="Sort By" variant="outline-secondary" className="w-100">
+            <Dropdown.Item active={sortBy === 'popularity'} onClick={() => handleSortByChange('popularity')}>
+              Popularity
+            </Dropdown.Item>
+            <Dropdown.Item active={sortBy === 'priceAsc'} onClick={() => handleSortByChange('priceAsc')}>
+              Price: Low to High
+            </Dropdown.Item>
+            <Dropdown.Item active={sortBy === 'priceDesc'} onClick={() => handleSortByChange('priceDesc')}>
+              Price: High to Low
+            </Dropdown.Item>
+            <Dropdown.Item active={sortBy === 'newest'} onClick={() => handleSortByChange('newest')}>
+              Newest First
+            </Dropdown.Item>
+          </DropdownButton>
+        </Col>
+      </Row>
+      
+      {/* Products Grid */}
+      {error && <div className="alert alert-danger">{error}</div>}
+      
+      {loading && page === 1 ? (
+        <div className="text-center my-5">
+          <div className="spinner-border" role="status">
+            <span className="visually-hidden">Loading...</span>
           </div>
-        ) : products.length === 0 ? (
-          <div className="text-center my-5">
-            <p>No products found. Try changing your filters.</p>
-          </div>
-        ) : (
-          <>
-            <Row>
-              {products.map(product => (
-                <Col lg={3} md={4} sm={6} className="mb-4" key={product.id}>
-                  <Card className="h-100 product-card">
+        </div>
+      ) : (
+        <>
+          <Row>
+            {products.length > 0 ? (
+              products.map(product => (
+                <Col key={product.id} xs={12} sm={6} md={4} lg={3} className="mb-4">
+                  <Card className="product-card h-100">
                     <div className="product-img-wrapper">
                       <Card.Img 
                         variant="top" 
-                        src={product.imageURL || 'https://via.placeholder.com/300'} 
+                        src={product.images && product.images.length > 0 ? product.images[0] : '/placeholder.jpg'} 
                         alt={product.name}
                         className="product-img"
                       />
-                      {product.stock <= 0 && (
-                        <span className="badge bg-danger position-absolute top-0 end-0 m-2">Out of Stock</span>
-                      )}
                     </div>
                     <Card.Body>
-                      <Card.Title>{product.name}</Card.Title>
-                      <Card.Text className="text-muted small">{product.category}</Card.Text>
-                      <Card.Text className="fw-bold">₹{product.price?.toFixed(2)}</Card.Text>
+                      <Card.Title className="text-truncate-2">{product.name}</Card.Title>
+                      <div className="d-flex justify-content-between">
+                        <Card.Text className="fw-bold">₹{product.price.toLocaleString()}</Card.Text>
+                        <Card.Text>
+                          <FaStar className="text-warning" /> {product.rating || '4.5'}
+                        </Card.Text>
+                      </div>
+                      <Card.Text className="text-truncate-2">{product.description}</Card.Text>
                     </Card.Body>
-                    <Card.Footer className="bg-white border-top-0 d-flex justify-content-between">
-                      <Button 
-                        variant="primary" 
-                        size="sm"
-                        onClick={() => handleAddToCart(product)}
-                        disabled={product.stock <= 0}
-                      >
-                        {product.stock <= 0 ? 'Out of Stock' : 'Add to Cart'}
-                      </Button>
-                      <Button 
-                        as={Link}
-                        to={`/product/${product.id}`}
-                        variant="outline-secondary" 
-                        size="sm"
-                      >
-                        Details
-                      </Button>
+                    <Card.Footer className="bg-transparent">
+                      <div className="d-grid gap-2">
+                        <Button variant="primary" onClick={() => handleAddToCart(product)}>
+                          <FaShoppingCart className="me-2" /> Add to Cart
+                        </Button>
+                        <Link to={`/product/${product.id}`} className="btn btn-outline-secondary">
+                          View Details
+                        </Link>
+                      </div>
                     </Card.Footer>
                   </Card>
                 </Col>
-              ))}
-            </Row>
-            
-            {/* Load More */}
-            {hasMore && (
-              <div className="text-center mt-4">
-                <Button 
-                  variant="primary" 
-                  onClick={loadMoreProducts}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>
-                      <Spinner
-                        as="span"
-                        animation="border"
-                        size="sm"
-                        role="status"
-                        aria-hidden="true"
-                        className="me-2"
-                      />
-                      Loading...
-                    </>
-                  ) : 'Load More'}
-                </Button>
-              </div>
+              ))
+            ) : (
+              <Col xs={12} className="text-center my-5">
+                <h4>No products found</h4>
+                <p>Try changing your filters or search query</p>
+              </Col>
             )}
-          </>
-        )}
-      </Container>
-      <Footer />
-    </>
+          </Row>
+          
+          {/* Load More Button */}
+          {hasMore && (
+            <div className="text-center mt-4">
+              <Button 
+                variant="outline-primary" 
+                onClick={loadMoreProducts}
+                disabled={loading}
+              >
+                {loading ? 'Loading...' : 'Load More Products'}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </Container>
   );
 }
 

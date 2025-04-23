@@ -1,328 +1,405 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Row, Col, Card, Button, Form, Table, Modal } from 'react-bootstrap';
-import { collection, doc, addDoc, updateDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../../firebase';
-import { toast } from 'react-toastify';
+import { Container, Row, Col, Form, Button, Card, Table, Modal, Alert } from 'react-bootstrap';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { uploadMultipleImages } from '../../utils/cloudinary';
 import { v4 as uuidv4 } from 'uuid';
-import AdminSidebar from '../../components/admin/AdminSidebar';
-import AdminHeader from '../../components/admin/AdminHeader';
 
 function ProductManagement() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [currentProduct, setCurrentProduct] = useState(null);
-  
-  // Form states
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [price, setPrice] = useState('');
-  const [category, setCategory] = useState('');
-  const [stock, setStock] = useState('');
-  const [image, setImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState('');
-  
+  const [currentProduct, setCurrentProduct] = useState({
+    name: '',
+    description: '',
+    price: '',
+    category: '',
+    stock: '',
+    images: []
+  });
+  const [imageFiles, setImageFiles] = useState([]);
+  const [isEditing, setIsEditing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  // Categories for dropdown
+  const categories = ['Electronics', 'Clothing', 'Home & Kitchen', 'Books', 'Toys', 'Beauty'];
+
   // Fetch products
   useEffect(() => {
     fetchProducts();
   }, []);
-  
+
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const productsRef = collection(db, 'products');
-      const productsSnapshot = await getDocs(productsRef);
-      const productsList = productsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setProducts(productsList);
-    } catch (error) {
-      console.error("Error fetching products:", error);
-      toast.error("Failed to fetch products");
+      const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+      const querySnapshot = await getDocs(q);
+      
+      const productsData = [];
+      querySnapshot.forEach((doc) => {
+        productsData.push({ id: doc.id, ...doc.data() });
+      });
+      
+      setProducts(productsData);
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching products:', err);
+      setError('Failed to load products. Please try again.');
     } finally {
       setLoading(false);
     }
   };
-  
-  // Handle image change
+
+  // Handle form field changes
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setCurrentProduct({
+      ...currentProduct,
+      [name]: name === 'price' || name === 'stock' ? parseFloat(value) : value
+    });
+  };
+
+  // Handle image file selection
   const handleImageChange = (e) => {
-    if (e.target.files[0]) {
-      setImage(e.target.files[0]);
-      setImagePreview(URL.createObjectURL(e.target.files[0]));
+    if (e.target.files) {
+      setImageFiles(Array.from(e.target.files));
     }
   };
-  
-  // Reset form
-  const resetForm = () => {
-    setName('');
-    setDescription('');
-    setPrice('');
-    setCategory('');
-    setStock('');
-    setImage(null);
-    setImagePreview('');
-    setEditMode(false);
-    setCurrentProduct(null);
-  };
-  
-  // Open modal for adding a product
+
+  // Open modal for adding new product
   const handleAddProduct = () => {
-    resetForm();
+    setCurrentProduct({
+      name: '',
+      description: '',
+      price: '',
+      category: '',
+      stock: '',
+      images: []
+    });
+    setImageFiles([]);
+    setIsEditing(false);
     setShowModal(true);
   };
-  
-  // Open modal for editing a product
+
+  // Open modal for editing product
   const handleEditProduct = (product) => {
     setCurrentProduct(product);
-    setName(product.name);
-    setDescription(product.description);
-    setPrice(product.price);
-    setCategory(product.category);
-    setStock(product.stock);
-    setImagePreview(product.imageURL);
-    setEditMode(true);
+    setImageFiles([]);
+    setIsEditing(true);
     setShowModal(true);
   };
-  
-  // Handle form submission
-  const handleSubmit = async (e) => {
+
+  // Upload images to Cloudinary
+  const uploadImages = async () => {
+    if (imageFiles.length === 0) {
+      return currentProduct.images || [];
+    }
+
+    try {
+      // Upload all image files to Cloudinary
+      const uploadedImageUrls = await uploadMultipleImages(imageFiles, (progress) => {
+        setUploadProgress(progress);
+      });
+      
+      console.log('Images uploaded successfully:', uploadedImageUrls);
+      
+      // Combine with existing images if editing
+      return [...(currentProduct.images || []), ...uploadedImageUrls];
+    } catch (error) {
+      console.error('Error uploading images:', error);
+      throw error;
+    }
+  };
+
+  // Save product (add new or update existing)
+  const handleSaveProduct = async (e) => {
     e.preventDefault();
     
     try {
-      const productData = {
-        name,
-        description,
-        price: parseFloat(price),
-        category,
-        stock: parseInt(stock),
-        updatedAt: new Date().toISOString()
-      };
+      setLoading(true);
       
-      // Upload image if selected
-      if (image) {
-        const storageRef = ref(storage, `products/${uuidv4()}`);
-        await uploadBytes(storageRef, image);
-        const downloadURL = await getDownloadURL(storageRef);
-        productData.imageURL = downloadURL;
+      // Validate required fields
+      if (!currentProduct.name || !currentProduct.price || !currentProduct.category) {
+        setError('Please fill in all required fields');
+        setLoading(false);
+        return;
       }
       
-      if (editMode && currentProduct) {
+      // Upload images if any
+      const imageUrls = await uploadImages();
+      
+      if (isEditing) {
         // Update existing product
-        const productRef = doc(db, 'products', currentProduct.id);
-        await updateDoc(productRef, productData);
-        toast.success("Product updated successfully");
+        await updateDoc(doc(db, 'products', currentProduct.id), {
+          name: currentProduct.name,
+          description: currentProduct.description,
+          price: parseFloat(currentProduct.price),
+          category: currentProduct.category,
+          stock: parseFloat(currentProduct.stock) || 0,
+          images: imageUrls,
+          updatedAt: new Date().toISOString()
+        });
+        
+        console.log('Product updated successfully');
       } else {
         // Add new product
-        productData.createdAt = new Date().toISOString();
-        await addDoc(collection(db, 'products'), productData);
-        toast.success("Product added successfully");
+        await addDoc(collection(db, 'products'), {
+          name: currentProduct.name,
+          description: currentProduct.description,
+          price: parseFloat(currentProduct.price),
+          category: currentProduct.category,
+          stock: parseFloat(currentProduct.stock) || 0,
+          images: imageUrls,
+          popularity: 0,
+          rating: 5.0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        
+        console.log('Product added successfully');
       }
       
+      // Refresh products list
       fetchProducts();
       setShowModal(false);
-      resetForm();
-    } catch (error) {
-      console.error("Error saving product:", error);
-      toast.error("Failed to save product");
+      setError(null);
+    } catch (err) {
+      console.error('Error saving product:', err);
+      setError('Failed to save product. Please try again.');
+    } finally {
+      setLoading(false);
+      setUploadProgress(0);
     }
   };
-  
-  // Handle product deletion
+
+  // Delete product
   const handleDeleteProduct = async (productId) => {
-    if (window.confirm("Are you sure you want to delete this product?")) {
+    if (window.confirm('Are you sure you want to delete this product?')) {
       try {
+        setLoading(true);
         await deleteDoc(doc(db, 'products', productId));
-        toast.success("Product deleted successfully");
+        console.log('Product deleted successfully');
         fetchProducts();
-      } catch (error) {
-        console.error("Error deleting product:", error);
-        toast.error("Failed to delete product");
+      } catch (err) {
+        console.error('Error deleting product:', err);
+        setError('Failed to delete product. Please try again.');
+      } finally {
+        setLoading(false);
       }
     }
   };
 
   return (
-    <div className="d-flex">
-      <AdminSidebar />
-      <div className="flex-grow-1">
-        <AdminHeader title="Product Management" />
-        <Container fluid className="py-3">
-          <Card className="shadow-sm">
-            <Card.Header className="d-flex justify-content-between align-items-center">
-              <h5 className="mb-0">Products</h5>
-              <Button variant="primary" onClick={handleAddProduct}>
-                Add New Product
-              </Button>
-            </Card.Header>
-            <Card.Body>
-              {loading ? (
-                <p>Loading products...</p>
-              ) : (
-                <div className="table-responsive">
-                  <Table striped bordered hover>
-                    <thead>
-                      <tr>
-                        <th>Image</th>
-                        <th>Name</th>
-                        <th>Category</th>
-                        <th>Price</th>
-                        <th>Stock</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {products.length > 0 ? (
-                        products.map(product => (
-                          <tr key={product.id}>
-                            <td>
-                              <img 
-                                src={product.imageURL || 'https://via.placeholder.com/50'} 
-                                alt={product.name}
-                                style={{ width: '50px', height: '50px', objectFit: 'cover' }}
-                              />
-                            </td>
-                            <td>{product.name}</td>
-                            <td>{product.category}</td>
-                            <td>₹{product.price?.toFixed(2)}</td>
-                            <td>{product.stock}</td>
-                            <td>
-                              <Button 
-                                variant="outline-primary" 
-                                size="sm" 
-                                className="me-2"
-                                onClick={() => handleEditProduct(product)}
-                              >
-                                Edit
-                              </Button>
-                              <Button 
-                                variant="outline-danger" 
-                                size="sm"
-                                onClick={() => handleDeleteProduct(product.id)}
-                              >
-                                Delete
-                              </Button>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan="6" className="text-center">No products found</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </Table>
+    <Container className="py-4">
+      <Card className="mb-4">
+        <Card.Header className="bg-primary text-white d-flex justify-content-between align-items-center">
+          <h4 className="mb-0">Product Management</h4>
+          <Button variant="light" onClick={handleAddProduct}>Add New Product</Button>
+        </Card.Header>
+        <Card.Body>
+          {error && <Alert variant="danger">{error}</Alert>}
+          
+          {loading && <div className="text-center py-4">Loading products...</div>}
+          
+          {!loading && products.length === 0 ? (
+            <div className="text-center py-4">
+              <p>No products found. Add your first product!</p>
+            </div>
+          ) : (
+            <Table responsive striped hover>
+              <thead>
+                <tr>
+                  <th style={{ width: '80px' }}>Image</th>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th>Price</th>
+                  <th>Stock</th>
+                  <th style={{ width: '150px' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map(product => (
+                  <tr key={product.id}>
+                    <td>
+                      <img 
+                        src={product.images && product.images.length > 0 ? product.images[0] : '/placeholder.jpg'} 
+                        alt={product.name}
+                        style={{ width: '50px', height: '50px', objectFit: 'cover' }}
+                        className="rounded"
+                      />
+                    </td>
+                    <td>{product.name}</td>
+                    <td>{product.category}</td>
+                    <td>₹{product.price?.toLocaleString()}</td>
+                    <td>{product.stock}</td>
+                    <td>
+                      <Button 
+                        variant="outline-primary" 
+                        size="sm" 
+                        className="me-2"
+                        onClick={() => handleEditProduct(product)}
+                      >
+                        Edit
+                      </Button>
+                      <Button 
+                        variant="outline-danger" 
+                        size="sm"
+                        onClick={() => handleDeleteProduct(product.id)}
+                      >
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </Card.Body>
+      </Card>
+      
+      {/* Add/Edit Product Modal */}
+      <Modal
+        show={showModal}
+        onHide={() => setShowModal(false)}
+        backdrop="static"
+        size="lg"
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>{isEditing ? 'Edit Product' : 'Add New Product'}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form onSubmit={handleSaveProduct}>
+            <Row>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Product Name*</Form.Label>
+                  <Form.Control
+                    type="text"
+                    name="name"
+                    value={currentProduct.name}
+                    onChange={handleInputChange}
+                    required
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Category*</Form.Label>
+                  <Form.Select
+                    name="category"
+                    value={currentProduct.category}
+                    onChange={handleInputChange}
+                    required
+                  >
+                    <option value="">Select Category</option>
+                    {categories.map(category => (
+                      <option key={category} value={category}>{category}</option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
+              </Col>
+            </Row>
+            
+            <Row>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Price (₹)*</Form.Label>
+                  <Form.Control
+                    type="number"
+                    name="price"
+                    value={currentProduct.price}
+                    onChange={handleInputChange}
+                    required
+                    min="0"
+                    step="0.01"
+                  />
+                </Form.Group>
+              </Col>
+              <Col md={6}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Stock Quantity</Form.Label>
+                  <Form.Control
+                    type="number"
+                    name="stock"
+                    value={currentProduct.stock}
+                    onChange={handleInputChange}
+                    min="0"
+                  />
+                </Form.Group>
+              </Col>
+            </Row>
+            
+            <Form.Group className="mb-3">
+              <Form.Label>Description</Form.Label>
+              <Form.Control
+                as="textarea"
+                name="description"
+                value={currentProduct.description}
+                onChange={handleInputChange}
+                rows={3}
+              />
+            </Form.Group>
+            
+            <Form.Group className="mb-3">
+              <Form.Label>Images</Form.Label>
+              <Form.Control
+                type="file"
+                multiple
+                onChange={handleImageChange}
+                accept="image/*"
+              />
+              <Form.Text className="text-muted">
+                You can select multiple images. Current images will be preserved.
+              </Form.Text>
+            </Form.Group>
+            
+            {uploadProgress > 0 && (
+              <div className="mb-3">
+                <div className="progress">
+                  <div 
+                    className="progress-bar" 
+                    role="progressbar" 
+                    style={{ width: `${uploadProgress}%` }}
+                    aria-valuenow={uploadProgress} 
+                    aria-valuemin="0" 
+                    aria-valuemax="100"
+                  >
+                    {uploadProgress}%
+                  </div>
                 </div>
-              )}
-            </Card.Body>
-          </Card>
-        </Container>
-        
-        {/* Add/Edit Product Modal */}
-        <Modal show={showModal} onHide={() => setShowModal(false)} size="lg">
-          <Modal.Header closeButton>
-            <Modal.Title>{editMode ? 'Edit Product' : 'Add New Product'}</Modal.Title>
-          </Modal.Header>
-          <Form onSubmit={handleSubmit}>
-            <Modal.Body>
-              <Row>
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label>Product Name</Form.Label>
-                    <Form.Control 
-                      type="text" 
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      required
+              </div>
+            )}
+            
+            {currentProduct.images && currentProduct.images.length > 0 && (
+              <div className="mb-3">
+                <p>Current Images:</p>
+                <div className="d-flex flex-wrap gap-2">
+                  {currentProduct.images.map((img, index) => (
+                    <img 
+                      key={index}
+                      src={img} 
+                      alt={`Product ${index}`}
+                      style={{ width: '80px', height: '80px', objectFit: 'cover' }}
+                      className="rounded"
                     />
-                  </Form.Group>
-                  
-                  <Form.Group className="mb-3">
-                    <Form.Label>Category</Form.Label>
-                    <Form.Control 
-                      type="text" 
-                      value={category}
-                      onChange={(e) => setCategory(e.target.value)}
-                      required
-                    />
-                  </Form.Group>
-                  
-                  <Row>
-                    <Col>
-                      <Form.Group className="mb-3">
-                        <Form.Label>Price (₹)</Form.Label>
-                        <Form.Control 
-                          type="number" 
-                          value={price}
-                          onChange={(e) => setPrice(e.target.value)}
-                          min="0"
-                          step="0.01"
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                    <Col>
-                      <Form.Group className="mb-3">
-                        <Form.Label>Stock</Form.Label>
-                        <Form.Control 
-                          type="number" 
-                          value={stock}
-                          onChange={(e) => setStock(e.target.value)}
-                          min="0"
-                          required
-                        />
-                      </Form.Group>
-                    </Col>
-                  </Row>
-                  
-                  <Form.Group className="mb-3">
-                    <Form.Label>Description</Form.Label>
-                    <Form.Control 
-                      as="textarea" 
-                      rows={3}
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      required
-                    />
-                  </Form.Group>
-                </Col>
-                
-                <Col md={6}>
-                  <Form.Group className="mb-3">
-                    <Form.Label>Product Image</Form.Label>
-                    <Form.Control 
-                      type="file" 
-                      accept="image/*"
-                      onChange={handleImageChange}
-                      {...(editMode ? {} : { required: true })}
-                    />
-                    {imagePreview && (
-                      <div className="mt-3">
-                        <img 
-                          src={imagePreview} 
-                          alt="Preview" 
-                          style={{ maxWidth: '100%', maxHeight: '200px' }} 
-                        />
-                      </div>
-                    )}
-                  </Form.Group>
-                </Col>
-              </Row>
-            </Modal.Body>
-            <Modal.Footer>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            <div className="d-flex justify-content-end gap-2 mt-4">
               <Button variant="secondary" onClick={() => setShowModal(false)}>
                 Cancel
               </Button>
-              <Button variant="primary" type="submit">
-                {editMode ? 'Update Product' : 'Add Product'}
+              <Button type="submit" variant="primary" disabled={loading}>
+                {loading ? 'Saving...' : 'Save Product'}
               </Button>
-            </Modal.Footer>
+            </div>
           </Form>
-        </Modal>
-      </div>
-    </div>
+        </Modal.Body>
+      </Modal>
+    </Container>
   );
 }
 

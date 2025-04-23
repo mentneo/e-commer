@@ -1,0 +1,313 @@
+/* Order List Styles */
+.orders-header {
+  border-bottom: 1px solid #eee;
+  padding-bottom: 1rem;
+}
+
+.orders-title {
+  font-weight: 700;
+  color: #333;
+}
+
+.orders-list-card {
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.orders-list-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #eee;
+  padding: 15px;
+}
+
+.order-list {
+  max-height: 650px;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.order-nav-item {
+  width: 100%;
+}
+
+.order-item {
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin: 0 !important;
+  border-radius: 0 !important;
+}
+
+.order-item:hover {
+  background-color: #f8f9fa;
+}
+
+.order-item.active {
+  background-color: #e2f3ff !important;
+  border-left: 4px solid #0d6efd;
+  color: #0d6efd;
+}
+
+.status-badge {
+  font-size: 0.75rem;
+  padding: 5px 8px;
+  border-radius: 12px;
+}
+
+.status-badge-lg {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* Order Details Card */
+.order-details-card {
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.order-details-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #eee;
+  padding: 15px;
+}
+
+/* Order Tracking Styles */
+.tracking-steps {
+  padding: 20px 0;
+}
+
+.tracking-progress-bar {
+  position: absolute;
+  top: 28px;
+  left: 0;
+  height: 4px;
+  background-color: #0d6efd;
+  z-index: 1;
+  transition: width 0.8s ease;
+}
+
+.tracking-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 2;
+  max-width: 80px;
+  text-align: center;
+}
+
+.step-icon {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background-color: #f8f9fa;
+  border: 2px solid #dee2e6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  color: #6c757d;
+  font-size: 20px;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.tracking-step.completed .step-icon {
+  background-color: #e2f3ff;
+  border-color: #0d6efd;
+  color: #0d6efd;
+  box-shadow: 0 2px 8px rgba(13, 110, 253, 0.2);
+}
+
+.step-label {
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  color: #6c757d;
+  transition: color 0.3s ease;
+}
+
+.tracking-step.completed .step-label {
+  color: #0d6efd;
+}
+
+/* Delivery Card */
+.delivery-card {
+  border-color: rgba(13, 110, 253, 0.2);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.delivery-title {
+  color: #0d6efd;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.delivery-info {
+  padding: 10px 0;
+}
+
+.info-item {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.info-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #555;
+  margin-bottom: 4px;
+}
+
+.info-value {
+  color: #333;
+}
+
+.tracking-btn {
+  padding: 8px 20px;
+  font-weight: 500;
+}
+
+/* Accordion Styling */
+.order-accordion {
+  margin-top: 2rem;
+}
+
+.order-accordion-item {
+  margin-bottom: 1rem;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,0.125);
+}
+
+.accordion-button:not(.collapsed) {
+  background-color: #f0f7ff;
+  color: #0d6efd;
+  box-shadow: none;
+}
+
+/* Order Items Table */
+.order-items-table th {
+  font-weight: 600;
+  color: #555;
+}
+
+.product-thumbnail {
+  object-fit: contain;
+  border: 1px solid #eee;
+}
+
+.product-name {
+  font-weight: 500;
+}
+
+/* Shipping & Payment Info */
+.shipping-info, .payment-info {
+  padding: 0.5rem 0;
+}
+
+.info-group {
+  margin-bottom: 1.5rem;
+}
+
+.info-group h6 {
+  color: #555;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.payment-method {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #eee;
+}
+
+.order-summary {
+  padding-top: 1rem;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.summary-item.total {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+/* Support Section */
+.support-section {
+  background-color: #f8f9fa;
+  padding: 15px;
+  border-radius: 6px;
+  margin-top: 2rem;
+}
+
+.support-btn {
+  margin-top: 0.5rem;
+}
+
+/* No Orders & Loading */
+.no-orders-card {
+  border: none;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+
+.empty-orders-icon {
+  width: 100px;
+  height: 100px;
+  margin: 0 auto 2rem;
+  background-color: #f8f9fa;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shop-now-btn {
+  padding: 12px 25px;
+  font-weight: 500;
+  border-radius: 30px;
+}
+
+.loading-spinner {
+  padding: 3rem 0;
+}
+
+.index-creating-alert {
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+/* Responsive Adjustments */
+@media (max-width: 992px) {
+  .tracking-step {
+    max-width: 60px;
+  }
+  
+  .step-icon {
+    width: 40px;
+    height: 40px;
+    font-size: 16px;
+  }
+  
+  .step-label {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .order-list {
+    max-height: 300px;
+  }
+  
+  .tracking-steps {
+    padding: 10px 0;
+  }
+}
